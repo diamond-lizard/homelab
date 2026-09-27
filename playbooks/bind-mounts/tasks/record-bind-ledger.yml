@@ -1,0 +1,132 @@
+---
+# Records the bind half of the provenance ledger at the mount sites, so a run
+# that unmounts a bind and then fails before the final ledger write still
+# leaves the ledger describing only what this run observed.
+#
+# Included with:
+#
+#   bind_record_lane   host   - the host bind phase ran and observed the host
+#                               lane (host_bind_probe, host_bind)
+#                      guest  - the guest mount phase ran and observed the
+#                               guest lane (guest_mount_result,
+#                               guest_mount_retry)
+#
+# Every entry written here carries an `observed` marker naming the observation
+# behind it: matched means the run found the target bound from that source,
+# mounted means the run created it. The consumers that read an entry as proof
+# of ownership require the marker, so an entry written by an older run cannot
+# license a removal on its own.
+#
+# A machine whose lane this run did not observe keeps its previous entries: the
+# file records observations, and a run that did not look does not rewrite them.
+# Two guest-lane cases are conclusions rather than gaps and clear the lane: a
+# machine that is stopped now, and a machine this run started, cannot hold a
+# guest bind at all, because a bind does not survive a stop.
+#
+# Every task carries tags: [always] because tags do not propagate into a
+# dynamically included file: without it, a partial-tag run would run the include
+# and skip every task in it, silently.
+- name: Collect the observed host bind facts
+  ansible.builtin.set_fact:
+    bind_record_entries: >-
+      {%- set out = {} -%}
+      {%- if bind_record_lane == 'host' and host_bind_probe is defined -%}
+      {%- for m in normalized -%}
+      {%- set observed = [] -%}
+      {%- for mnt in all_mounts | selectattr('machine', 'eq', m.name) -%}
+      {%- set probe = (host_bind_probe.results | default([]))
+          | selectattr('item.name', 'eq', mnt.name) | first | default({}) -%}
+      {%- set bound = ((host_bind | default({})).results | default([]))
+          | selectattr('item.name', 'eq', mnt.name) | first | default({}) -%}
+      {%- if (probe.rc | default(-1) | int) == 0 -%}
+      {%- set _ = observed.append({'target': share_root_resolved ~ '/' ~ mnt.name,
+                                   'source': mnt.src, 'observed': 'matched'}) -%}
+      {%- elif (bound.rc | default(-1) | int) == 0 -%}
+      {%- set _ = observed.append({'target': share_root_resolved ~ '/' ~ mnt.name,
+                                   'source': mnt.src, 'observed': 'mounted'}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- set _ = out.update({m.name: observed}) -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {{ out }}
+  when: bind_record_lane == 'host'
+  tags: [always]
+
+- name: Collect the observed guest bind facts
+  ansible.builtin.set_fact:
+    bind_record_entries: >-
+      {%- set out = {} -%}
+      {%- if bind_record_lane == 'guest' -%}
+      {%- for m in normalized -%}
+      {%- set observed = [] -%}
+      {%- set void = smolvm_sections[m.name].state != 'running'
+          or m.name in (started_machines | default([])) -%}
+      {%- if guest_mount_result is defined -%}
+      {%- for mnt in all_mounts | selectattr('machine', 'eq', m.name) -%}
+      {%- set ran = (guest_mount_result.results | default([]))
+          | selectattr('item.name', 'eq', mnt.name) | first | default({}) -%}
+      {%- set retry = ((guest_mount_retry | default({})).results | default([]))
+          | selectattr('item.name', 'eq', mnt.name) | first | default({}) -%}
+      {%- if (ran.rc | default(-1) | int) == 0 -%}
+      {%- set how = 'mounted' if ('mounted:' in (ran.stdout | default(''))
+          or 'remounted:' in (ran.stdout | default(''))) else 'matched' -%}
+      {%- set _ = observed.append({'target': mnt.target, 'source': mnt.share_path,
+                                   'observed': how}) -%}
+      {%- elif (retry.rc | default(-1) | int) == 0 -%}
+      {%- set _ = observed.append({'target': mnt.target, 'source': mnt.share_path,
+                                   'observed': 'mounted'}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- set _ = out.update({m.name: observed}) -%}
+      {%- elif void -%}
+      {%- set _ = out.update({m.name: observed}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {{ out }}
+  when: bind_record_lane == 'guest'
+  tags: [always]
+
+- name: Merge the observed bind facts into the in-memory ledger
+  ansible.builtin.set_fact:
+    ledger: >-
+      {%- set machines = ledger.machines | default({}) -%}
+      {%- set out = {} -%}
+      {%- for e in machines | dict2items -%}
+      {%- if e.key in bind_record_entries -%}
+      {%- if bind_record_lane == 'host' -%}
+      {%- set _ = out.update({e.key: e.value | combine({'host_binds': bind_record_entries[e.key]})}) -%}
+      {%- else -%}
+      {%- set _ = out.update({e.key: e.value | combine({'guest_binds': bind_record_entries[e.key]})}) -%}
+      {%- endif -%}
+      {%- else -%}
+      {%- set _ = out.update({e.key: e.value}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for e in bind_record_entries | dict2items -%}
+      {%- if e.key not in machines -%}
+      {%- if bind_record_lane == 'host' -%}
+      {%- set _ = out.update({e.key: {'host_binds': e.value}}) -%}
+      {%- else -%}
+      {%- set _ = out.update({e.key: {'guest_binds': e.value}}) -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ {'format': 1, 'mode': ledger.mode | default(config.mode), 'machines': out} }}
+  when: bind_record_entries | length > 0
+  tags: [always]
+
+- name: Record the observed bind facts in the provenance ledger
+  ansible.builtin.copy:
+    content: |
+      # Managed by bind-mounts.yml (ansible). DO NOT EDIT; overwritten on re-run.
+      #
+      {{ ledger | to_nice_yaml(indent=2) }}
+    dest: "{{ bind_mounts_state_dir }}/{{ ledger_file_name }}"
+    mode: "0644"
+  when:
+    - not ansible_check_mode
+    - bind_record_entries | length > 0
+    - ledger_text | length == 0 or ledger_usable
+  tags: [always]

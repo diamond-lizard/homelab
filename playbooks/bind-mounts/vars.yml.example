@@ -1,0 +1,51 @@
+# Configuration for bind-mounts.yml — copy this file to vars.yml and fill in
+# your real values. vars.yml is git-ignored; never commit it.
+#
+# Everything below is an EXAMPLE. Replace machine names, users, and
+# directories with your own before running the playbook.
+
+# How each mount reaches the guest:
+#   bind   - one consolidated directory (share_root) is attached to each
+#            machine as a single smolvm volume; inside the guest the playbook
+#            bind-mounts every entry from the share to its target path. Uses
+#            ONE volume slot per machine no matter how many directories are
+#            shared.
+#   direct - every mount becomes its own smolvm volume. Subject to the volume
+#            ceiling (max_volumes); switching modes is a config flip plus a
+#            default run (or `--tags attach` for step-by-step control). The
+#            partial tags refuse a pending volume change instead of applying it.
+mode: bind
+
+# Host directory holding one subdirectory per mount. Required in both
+# modes. A run that changes a machine's volume set rewrites the provenance
+# ledger, which lives in the playbook user's state directory
+# (~/.local/state/bind-mount-on-host-and-guest/), so a run that stops early
+# still records what it attached.
+share_root: /home/you/share
+
+# Guest path at which share_root is mounted (bind mode).
+share_target: /mnt/share
+
+machines:
+  - name: my-vm           # machine name as shown by `smolvm machine ls`
+    user: you             # primary guest user (sudoers rule + .bash_profile hook, bind mode)
+    uid: 1000             # ownership for guest target dirs created by the playbook
+    gid: 1000
+    # profile_path: /home/you/.bash_profile  # optional; default /home/<user>/.bash_profile
+    # max_volumes: 4    # volume-slot ceiling; default 4 (3 for machines created
+    #                   # from a packed .smolmachine; one fewer when ports are
+    #                   # published - see smolvm issue #941)
+    mounts:
+      # name is optional (default: last path component of src) and is used in
+      # bind mode as the subdirectory name under share_root. The same
+      # name+src pair on several machines means those machines share the
+      # subdirectory.
+      - name: website
+        src: /home/you/projects/website      # host directory (must exist)
+        target: /home/you/projects/website   # absolute path inside the guest
+        # readonly: false   # direct mode appends ":ro"; bind mode remounts read-only
+        # uid: 1000         # optional ownership override for the created target dir
+        # gid: 1000
+      - name: notes
+        src: /home/you/work/notes
+        target: /home/you/work/notes

@@ -1,0 +1,7 @@
+.agent-tracker.json
+.omp/
+reference/
+tmp/
+playbooks/bind-mounts/vars.yml
+*~undo-tree~
+__pycache__/

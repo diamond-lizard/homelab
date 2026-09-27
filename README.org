@@ -1,0 +1,27 @@
+* homelab
+
+This repository holds the smolvm host/guest automation. The automation is
+organized as capability roles driven by thin profile plays; CONTEXT.md
+documents the vocabulary.
+
+* Layout
+
+- ansible.cfg -- repository-wide Ansible defaults (inventory, role path, filter plugins)
+- inventory/ -- the host inventory
+- playbooks/ -- the profile plays, one directory per component
+- filter_plugins/ -- repository-wide filter plugins
+- docs/ -- per-component architecture notes
+- roles/ -- capability roles (empty until the first role conversion)
+- CONTEXT.md -- the project vocabulary
+
+* Running
+
+Ansible runs on the smolvm host. Every play is started from the repository
+root, so ansible.cfg discovery picks up the inventory, the role path, and the
+filter plugins.
+
+* Components
+
+The bind-mounts playbook lives under playbooks/bind-mounts/. Its manual is
+playbooks/bind-mounts/README.org and its architecture notes are
+docs/bind-mounts/architecture.org.

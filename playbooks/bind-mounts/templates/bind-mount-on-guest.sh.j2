@@ -1,0 +1,55 @@
+#!/bin/sh
+# Managed by bind-mounts.yml (ansible). DO NOT EDIT — this file is overwritten
+# on every playbook run. Source: templates/bind-mount-on-guest.sh.j2 in the
+# bind-mount-on-host-and-guest repository. Change vars.yml instead and re-run
+# the playbook to regenerate this script.
+#
+# Idempotently bind-mounts the shared directories of machine "{{ m.name }}"
+# from the smolvm share into their target paths. Refuses to touch any mount it
+# did not create.
+set -eu
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "error: this script must run as root (the login hook calls it via sudo)" >&2
+    exit 1
+fi
+
+mount_if_needed() {
+    name=$1
+    src=$2
+    target=$3
+    ro=$4
+    # Presence = findmnt matched the target; identity = stat device:inode.
+    # findmnt prints one line per stacked mount, so use its rc, not its output.
+    if findmnt -rn -o TARGET -M "$target" >/dev/null 2>&1; then
+        src_id=$(stat -c '%d:%i' "$src")
+        tgt_id=$(stat -c '%d:%i' "$target")
+        if [ "$src_id" = "$tgt_id" ]; then
+            if [ -z "$(ls -A "$src" 2>/dev/null)" ]; then
+                echo "warning: $target is mounted but $src is empty; the host-side bind is probably missing" >&2
+            fi
+            echo "ok: $target already mounted from $src"
+            return 0
+        fi
+        echo "error: $target is a mountpoint whose content (device:inode $tgt_id) differs from $src ($src_id)" >&2
+        echo "error: refusing to touch a mount this script did not create; unmount it manually" >&2
+        exit 1
+    fi
+    if [ -z "$(ls -A "$src" 2>/dev/null)" ]; then
+        echo "error: $src is empty; the host-side bind is probably missing (did the host reboot?)." >&2
+        echo "error: run the playbook on the host, then log in again; not binding an empty directory." >&2
+        exit 1
+    fi
+    echo "bind-mounting $name: $src -> $target"
+    mount --bind "$src" "$target"
+    if [ "$ro" = "true" ]; then
+        mount -o remount,ro,bind "$target"
+    fi
+}
+
+{% for mnt in m.mounts %}
+{% set share_name = mnt.name | default(mnt.src | basename) %}
+mount_if_needed {{ share_name | quote }} {{ (config.share_target ~ '/' ~ share_name) | quote }} {{ mnt.target | quote }} {{ mnt.readonly | default(false) | bool | lower | quote }}
+{% endfor %}
+
+echo "all mounts processed for machine {{ m.name }}"
