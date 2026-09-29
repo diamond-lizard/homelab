@@ -1,0 +1,79 @@
+---
+# Prelude step 5: the run's single inventory parse, the absent-vs-unparseable
+# distinction, and the shared machine-state vocabulary gate. The vocabulary
+# lives in the repo-level filter plugin; it is never duplicated here.
+#
+# bind_mounts_inventory_fixture (optional play var, test seam): a dict with a
+# `text` key replaces the live `smolvm machine ls --verbose` output so
+# fixture-driven checks never touch a real machine. Undefined in real runs.
+- name: Collect the smolvm machine inventory (the run's single parse)
+  ansible.builtin.command: smolvm machine ls --verbose
+  register: bind_mounts_smolvm_ls
+  changed_when: false
+  check_mode: false
+  when: bind_mounts_inventory_fixture is not defined
+
+- name: Select the inventory text (fixture seam or the live parse)
+  ansible.builtin.set_fact:
+    bind_mounts_ls_text: >-
+      {{ bind_mounts_inventory_fixture.text if bind_mounts_inventory_fixture is defined
+         else bind_mounts_smolvm_ls.stdout }}
+
+- name: Parse the inventory once, keeping the rejected rows
+  ansible.builtin.set_fact:
+    bind_mounts_sections: "{{ bind_mounts_ls_text | smolvm_ls_sections }}"
+    bind_mounts_rejected_rows: "{{ bind_mounts_ls_text | smolvm_rejected_rows }}"
+
+- name: Fail on a configured machine whose inventory row is unparseable
+  vars:
+    bind_mounts_row: >-
+      {{ bind_mounts_rejected_rows | selectattr('name', 'eq', bind_mounts_gated.name) | first }}
+  ansible.builtin.fail:
+    msg: >-
+      ROW-UNPARSEABLE: machine '{{ bind_mounts_gated.name }}' appears in the
+      smolvm inventory but its state column ('{{ bind_mounts_row.state }}') is
+      not an alphabetic token, so the row could not be parsed. Inspect the
+      machine's state reporting; nothing was changed.
+  loop: "{{ bind_mounts_scoped_machines }}"
+  loop_control:
+    loop_var: bind_mounts_gated
+    label: "{{ bind_mounts_gated.name }}"
+  when: >-
+    bind_mounts_gated.name not in bind_mounts_sections
+    and bind_mounts_gated.name in (bind_mounts_rejected_rows | map(attribute='name') | list)
+
+- name: Fail on a configured machine absent from the inventory
+  ansible.builtin.fail:
+    msg: >-
+      MACHINE-ABSENT: machine '{{ bind_mounts_gated.name }}' was not found in
+      `smolvm machine ls --verbose` output. Check for a typo in the machine
+      registry, or create the machine first; nothing was changed.
+  loop: "{{ bind_mounts_scoped_machines }}"
+  loop_control:
+    loop_var: bind_mounts_gated
+    label: "{{ bind_mounts_gated.name }}"
+  when: >-
+    bind_mounts_gated.name not in bind_mounts_sections
+    and bind_mounts_gated.name not in (bind_mounts_rejected_rows | map(attribute='name') | list)
+
+- name: Classify the examined machines against the shared vocabulary
+  ansible.builtin.set_fact:
+    bind_mounts_state_gate: >-
+      {{ bind_mounts_sections
+         | smolvm_state_gate(bind_mounts_scoped_machines | map(attribute='name') | list) }}
+
+- name: Fail on a machine state the run refuses or does not know
+  ansible.builtin.fail:
+    msg: >-
+      {{ 'STATE-REFUSED' if bind_mounts_state_rec.value.classification == 'refuse'
+         else 'STATE-UNKNOWN' }}: machine '{{ bind_mounts_state_rec.key }}'
+      reports state '{{ bind_mounts_state_rec.value.state }}'. This role only
+      converges running, stopped, and created machines; it refuses the failed,
+      unreachable, and frozen states with the raw token named, and refuses any
+      other token as unknown. Resolve the machine's state before re-running;
+      nothing was changed.
+  loop: "{{ bind_mounts_state_gate | dict2items }}"
+  loop_control:
+    loop_var: bind_mounts_state_rec
+    label: "{{ bind_mounts_state_rec.key }}"
+  when: bind_mounts_state_rec.value.classification in ['refuse', 'unknown']

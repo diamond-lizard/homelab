@@ -1,0 +1,27 @@
+---
+# Prelude step 4: state-directory exclusivity. The ledger state directory is
+# host-only by decision; it must never sit at or below a bind-mode share
+# root, because share_root is attached to guests in bind mode.
+- name: Refuse a relative or whitespace-bearing state directory
+  ansible.builtin.assert:
+    that:
+      - bind_mounts_state_dir is match('/')
+      - bind_mounts_state_dir is not search('\\s')
+    msg: >-
+      STATE-DIR-RELATIVE: bind_mounts_state_dir must be an absolute path
+      without whitespace; got '{{ bind_mounts_state_dir }}'.
+
+- name: Refuse a state directory at or below a bind-mode share root
+  ansible.builtin.fail:
+    msg: >-
+      STATE-DIR-EXCLUSIVITY: bind_mounts_state_dir
+      '{{ bind_mounts_state_dir }}' sits at or below the share root
+      '{{ bind_mounts_checked.share_root }}' of bind-mode machine
+      '{{ bind_mounts_checked.name }}'. The ledger state directory is
+      host-only and must never live inside a share tree attached to guests;
+      nothing was changed.
+  loop: "{{ bind_mounts_scoped_machines | selectattr('mode', 'eq', 'bind') | list }}"
+  loop_control:
+    loop_var: bind_mounts_checked
+    label: "{{ bind_mounts_checked.name }}"
+  when: (bind_mounts_state_dir ~ '/') is match(bind_mounts_checked.share_root | realpath ~ '/')

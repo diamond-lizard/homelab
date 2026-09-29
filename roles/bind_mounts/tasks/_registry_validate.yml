@@ -1,0 +1,69 @@
+---
+# Prelude step 2a: machine-level registry validation. Every failure here is
+# pre-mutation; the argument spec already enforced the per-variable shape,
+# so these are the cross-field and cross-machine rules.
+- name: Refuse a phase outside the allowed set (belt and braces)
+  ansible.builtin.fail:
+    msg: >-
+      bind_mounts_phase must be one of: default, attach, mounts, verify,
+      teardown; got '{{ bind_mounts_phase }}'.
+  when: bind_mounts_phase not in ['default', 'attach', 'mounts', 'verify', 'teardown']
+
+- name: Refuse duplicate machine names
+  ansible.builtin.assert:
+    that:
+      - bind_mounts_machines | map(attribute='name') | list | length ==
+        (bind_mounts_machines | map(attribute='name') | unique | list | length)
+    msg: "REGISTRY-DUPLICATE-MACHINE: machine names in the registry must be unique."
+
+- name: Refuse a bind-mode machine missing a share field
+  vars:
+    bind_mounts_missing_field: >-
+      {{ 'share_root' if bind_mounts_checked.share_root | default('') | length == 0
+         else 'share_target' }}
+  ansible.builtin.fail:
+    msg: >-
+      REGISTRY-MISSING-SHARE-FIELD: bind-mode machine
+      '{{ bind_mounts_checked.name }}' is missing the required registry field
+      {{ bind_mounts_missing_field }}.
+  loop: "{{ bind_mounts_machines }}"
+  loop_control:
+    loop_var: bind_mounts_checked
+    label: "{{ bind_mounts_checked.name }}"
+  when: >-
+    bind_mounts_checked.mode == 'bind'
+    and not (bind_mounts_checked.share_root | default('') | length > 0
+             and bind_mounts_checked.share_target | default('') | length > 0)
+
+- name: Warn on a direct-mode machine with share fields set
+  vars:
+    bind_mounts_share_fields: >-
+      {{ bind_mounts_checked | dict2items
+         | selectattr('key', 'in', ['share_root', 'share_target'])
+         | selectattr('value') | map(attribute='key') | list }}
+  ansible.builtin.debug:
+    msg: >-
+      DIRECT-MODE-SHARE-FIELDS-WARNING: direct-mode machine
+      '{{ bind_mounts_checked.name }}' sets
+      {{ bind_mounts_share_fields | join(', ') }}; share fields are ignored
+      in direct mode.
+  loop: "{{ bind_mounts_machines }}"
+  loop_control:
+    loop_var: bind_mounts_checked
+    label: "{{ bind_mounts_checked.name }}"
+  when: >-
+    bind_mounts_checked.mode == 'direct'
+    and bind_mounts_share_fields | length > 0
+
+- name: Parse the machine limit list
+  ansible.builtin.set_fact:
+    bind_mounts_limit_parts: "{{ bind_mounts_limit_machines | map('trim') | reject('equalto', '') | list }}"
+
+- name: Refuse limit machines unknown to the registry
+  ansible.builtin.assert:
+    that:
+      - bind_mounts_limit_parts | difference(bind_mounts_machines | map(attribute='name') | list) | length == 0
+    msg: >-
+      LIMIT-MACHINE-UNKNOWN: bind_mounts_limit_machines names a machine that
+      is not in the registry. Configured machines:
+      {{ bind_mounts_machines | map(attribute='name') | list | join(', ') }}.

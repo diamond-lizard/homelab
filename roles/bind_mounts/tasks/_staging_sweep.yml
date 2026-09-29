@@ -1,0 +1,50 @@
+---
+# Prelude step 9b: lock-acquisition confirmation, the contention refusal, and
+# the staging sweep (killed-run recovery). Runs only after the holder launch,
+# so the sweep can never race a concurrent run that holds the lock.
+- name: Wait for the holder to acquire the lock or fail
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import os, sys, time
+        sent_path = sys.argv[1]
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if os.path.exists(sent_path):
+                sys.exit(0)
+            time.sleep(0.2)
+        sys.exit(4)
+      - "{{ bind_mounts_state_dir }}/run.{{ bind_mounts_lock_token }}.holder"
+  register: bind_mounts_lock_wait
+  changed_when: false
+  failed_when: false
+
+- name: Refuse when another run holds the lock
+  vars:
+    bind_mounts_active_run_text: >-
+      {{ lookup('ansible.builtin.file', bind_mounts_state_dir ~ '/run.json', errors='ignore')
+         | default('', true) }}
+    bind_mounts_active_run: >-
+      {{ bind_mounts_active_run_text | from_yaml
+         if bind_mounts_active_run_text | length > 0 else {} }}
+  ansible.builtin.fail:
+    msg: >-
+      RUN-LOCK-HELD: another bind_mounts run is active (pid
+      {{ bind_mounts_active_run.get('pid', 'unknown') }}, started at
+      {{ bind_mounts_active_run.get('started-at', 'unknown') }}); it holds
+      {{ bind_mounts_state_dir }}/run.lock and only one run may hold it.
+      Nothing was changed.
+  when: (bind_mounts_lock_wait.rc | default(4)) != 0
+
+- name: Sweep staging leftovers from a killed run
+  ansible.builtin.file:
+    path: "{{ bind_mounts_state_dir }}/staging"
+    state: absent
+
+- name: Recreate the staging directory for this run
+  ansible.builtin.file:
+    path: "{{ bind_mounts_state_dir }}/staging"
+    state: directory
+    mode: "0700"

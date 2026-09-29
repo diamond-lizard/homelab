@@ -1,0 +1,57 @@
+---
+# Prelude step 2b: mount-level registry validation over the full registry
+# (not just the scoped machines). The host-side source probes live in
+# _mounts_sources.yml.
+- name: Collect the registry's raw mount entries
+  ansible.builtin.set_fact:
+    bind_mounts_raw_mounts: >-
+      {{ bind_mounts_machines | selectattr('mounts', 'defined')
+         | map(attribute='mounts') | flatten }}
+
+- name: Refuse duplicate guest targets within a machine
+  ansible.builtin.assert:
+    that:
+      - bind_mounts_checked.mounts | map(attribute='target') | list | length ==
+        (bind_mounts_checked.mounts | map(attribute='target') | unique | list | length)
+    msg: "REGISTRY-DUPLICATE-TARGET: machine {{ bind_mounts_checked.name }} has duplicate guest targets."
+  loop: "{{ bind_mounts_machines }}"
+  loop_control:
+    loop_var: bind_mounts_checked
+    label: "{{ bind_mounts_checked.name }}"
+  when: bind_mounts_checked.mounts is defined
+
+- name: Refuse non-absolute or whitespace-bearing mount paths
+  vars:
+    bind_mounts_all_paths: >-
+      {{ (bind_mounts_raw_mounts | map(attribute='src') | list)
+         + (bind_mounts_raw_mounts | map(attribute='target') | list) }}
+  ansible.builtin.assert:
+    that:
+      - bind_mounts_all_paths | select('match', '/') | list | length == bind_mounts_all_paths | length
+      - bind_mounts_all_paths | reject('search', '\\s') | list | length == bind_mounts_all_paths | length
+    msg: >-
+      REGISTRY-BAD-PATH: every mount src and target must be an absolute path
+      without whitespace.
+
+- name: Build the registry's share-name and src pairs
+  ansible.builtin.set_fact:
+    bind_mounts_name_src_pairs: >-
+      {%- set pairs = [] -%}
+      {%- for mnt in bind_mounts_raw_mounts -%}
+      {%- set _ = pairs.append([mnt.name | default(mnt.src | basename), mnt.src]) -%}
+      {%- endfor -%}
+      {{ pairs }}
+
+- name: Refuse share names that do not map one-to-one to sources
+  ansible.builtin.assert:
+    that:
+      - bind_mounts_name_src_pairs | length == (bind_mounts_name_src_pairs | unique | list | length)
+      - bind_mounts_name_src_pairs | map('first') | list | length ==
+        (bind_mounts_name_src_pairs | map('first') | unique | list | length)
+      - bind_mounts_name_src_pairs | map('last') | list | length ==
+        (bind_mounts_name_src_pairs | map('last') | unique | list | length)
+    msg: >-
+      REGISTRY-NAME-SRC-ONE-TO-ONE: share names must map one-to-one to source
+      directories: the same src under two different names, or one name on two
+      different srcs, is rejected. (The same name+src pair on several machines
+      is fine - those machines share the subdirectory.)

@@ -1,0 +1,64 @@
+---
+# Prelude step 2c: host-side source probes. The no-follow stat
+# distinguishes symlinks, but for a MISSING path its result is
+# failure-shaped (no .stat attributes), so every consumer guards
+# attribute reads with `| default(false)`. Symlink sources get a second,
+# follow stat whose exists answer decides dangling deterministically.
+# Everything else falls through to the generic not-a-directory assert on
+# the same two result sets.
+- name: Stat every unique mount source on the host
+  ansible.builtin.stat:
+    path: "{{ bind_mounts_src_entry }}"
+    follow: false
+  loop: "{{ bind_mounts_raw_mounts | map(attribute='src') | unique | list }}"
+  loop_control:
+    loop_var: bind_mounts_src_entry
+    label: "{{ bind_mounts_src_entry }}"
+  register: bind_mounts_src_stats
+
+- name: Stat symlink mount sources through their target
+  ansible.builtin.stat:
+    path: "{{ bind_mounts_src_entry }}"
+    follow: true
+  loop: "{{ bind_mounts_raw_mounts | map(attribute='src') | unique | list }}"
+  loop_control:
+    loop_var: bind_mounts_src_entry
+    label: "{{ bind_mounts_src_entry }}"
+    extended: true
+  register: bind_mounts_src_link_stats
+  when: (bind_mounts_src_stats.results[ansible_loop.index0].stat.islnk | default(false))
+
+- name: Fail on a mount source that is a dangling leaf symlink
+  ansible.builtin.fail:
+    msg: >-
+      SOURCE-DANGLING-SYMLINK: mount source '{{ bind_mounts_src_entry }}' is a
+      dangling symlink; it points at nothing, so no volume can be created from
+      it. Create the target directory or fix the link; nothing was changed.
+  loop: "{{ bind_mounts_raw_mounts | map(attribute='src') | unique | list }}"
+  loop_control:
+    loop_var: bind_mounts_src_entry
+    label: "{{ bind_mounts_src_entry }}"
+    extended: true
+  when: >-
+    (bind_mounts_src_stats.results[ansible_loop.index0].stat.islnk | default(false))
+    and not (bind_mounts_src_link_stats.results[ansible_loop.index0].stat.exists | default(false))
+
+- name: Fail on missing or non-directory mount sources
+  ansible.builtin.assert:
+    that:
+      - >-
+        ((not (bind_mounts_src_stats.results[ansible_loop.index0].stat.islnk | default(false))
+          and (bind_mounts_src_stats.results[ansible_loop.index0].stat.exists | default(false))
+          and (bind_mounts_src_stats.results[ansible_loop.index0].stat.isdir | default(false)))
+         or
+         ((bind_mounts_src_stats.results[ansible_loop.index0].stat.islnk | default(false))
+          and (bind_mounts_src_link_stats.results[ansible_loop.index0].stat.exists | default(false))
+          and (bind_mounts_src_link_stats.results[ansible_loop.index0].stat.isdir | default(false))))
+    fail_msg: >-
+      SOURCE-NOT-DIRECTORY: mount source '{{ bind_mounts_src_entry }}' must
+      exist and be a directory on the host.
+  loop: "{{ bind_mounts_raw_mounts | map(attribute='src') | unique | list }}"
+  loop_control:
+    loop_var: bind_mounts_src_entry
+    label: "{{ bind_mounts_src_entry }}"
+    extended: true

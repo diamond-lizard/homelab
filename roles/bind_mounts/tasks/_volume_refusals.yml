@@ -1,0 +1,33 @@
+---
+# Prelude step 7b: the structured refusal rows for unproven volumes - the
+# data the phase files render into the ACTION REQUIRED boxes (machine,
+# target, observed vs configured source, the exact force switch, and the
+# manual removal command).
+- name: Collect the structured refusal rows for unproven volumes
+  ansible.builtin.set_fact:
+    bind_mounts_volume_refusals: >-
+      {%- set out = [] -%}
+      {%- for p in bind_mounts_volume_plans | dict2items -%}
+      {%- for u in p.value.unproven -%}
+      {%- set cmd = 'smolvm machine update --name ' ~ u.machine
+            ~ ' --remove-volume=' ~ u.observed ~ ':' ~ u.target -%}
+      {%- set _ = out.append({
+            'machine': u.machine,
+            'target': u.target,
+            'observed': u.observed,
+            'configured': u.configured,
+            'ledger': u.ledger,
+            'force_switch': '-e bind_mounts_force_remount=true',
+            'force_prefixes': bind_mounts_force_allow_prefixes,
+            'manual_command': cmd }) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Report volumes at configured targets without ledger proof
+  ansible.builtin.debug:
+    msg: >-
+      VOLUME-UNPROVEN: {{ bind_mounts_volume_refusals | length }} volume(s) at
+      configured targets the ledger cannot prove; refusal data:
+      {{ bind_mounts_volume_refusals }}.
+  when: bind_mounts_volume_refusals | length > 0

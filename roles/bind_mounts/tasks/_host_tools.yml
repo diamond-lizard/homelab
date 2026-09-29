@@ -1,0 +1,20 @@
+---
+# Prelude step 1: host-tool availability, refused once naming every miss.
+- name: Check the host tools this run needs
+  ansible.builtin.command:
+    argv:
+      - sh
+      - -c
+      - >-
+        for t in python3 findmnt mount umount rmdir flock smolvm; do
+        command -v "$t" >/dev/null 2>&1 || printf '%s\n' "$t"; done
+  register: bind_mounts_tool_probe
+  changed_when: false
+  check_mode: false
+
+- name: Refuse when host tools are missing
+  ansible.builtin.fail:
+    msg: >-
+      MISSING HOST TOOLS: {{ bind_mounts_tool_probe.stdout_lines | join(', ') }}.
+      Install them on this host before re-running; nothing was changed.
+  when: bind_mounts_tool_probe.stdout_lines | length > 0

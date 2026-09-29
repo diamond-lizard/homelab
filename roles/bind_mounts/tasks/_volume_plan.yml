@@ -1,0 +1,93 @@
+---
+# Prelude step 7: the volume plan, per examined machine, from the entry's own
+# mode. Classification only - the applying and the refusing renderings happen
+# in the phase files; the refusal rows collected here feed the ACTION REQUIRED
+# boxes. One ownership rule: ledger proof on realpath-normalized sources, or
+# force plus allow-prefixes; removal names the source the machine reports
+# while the volume is listed, the recorded source otherwise.
+- name: Compute the volume convergence plan per machine
+  ansible.builtin.set_fact:
+    bind_mounts_volume_plans: >-
+      {%- set result = {} -%}
+      {%- for m in bind_mounts_scoped_machines -%}
+      {%- set observed = bind_mounts_sections[m.name].mounts -%}
+      {%- set observed_targets = observed | map(attribute='target') | list -%}
+      {%- set entry = bind_mounts_ledger.machines.get(m.name, {}) -%}
+      {%- if m.mode == 'bind' -%}
+      {%- set desired = [{'src': m.share_root | realpath, 'target': m.share_target, 'ro': false}] -%}
+      {%- else -%}
+      {%- set desired = [] -%}
+      {%- for mnt in m.mounts -%}
+      {%- set _ = desired.append({'src': mnt.src, 'target': mnt.target, 'ro': mnt.readonly}) -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- set desired_targets = desired | map(attribute='target') | list -%}
+      {%- set managed = [] -%}
+      {%- if entry.get('share_volume', false) -%}
+      {%- set _ = managed.append({'src': m.share_root | realpath, 'target': m.share_target}) -%}
+      {%- endif -%}
+      {%- for v in entry.get('volumes', []) -%}
+      {%- set _ = managed.append({'src': v.src, 'target': v.target}) -%}
+      {%- endfor -%}
+      {%- set managed_resolved = [] -%}
+      {%- for e in managed -%}
+      {%- set _ = managed_resolved.append({'src': e.src | realpath, 'target': e.target}) -%}
+      {%- endfor -%}
+      {%- set stale = managed | rejectattr('target', 'in', desired_targets)
+                        | selectattr('target', 'in', observed_targets) | list -%}
+      {%- set stale_targets = stale | map(attribute='target') | list -%}
+      {%- set adds = [] -%}
+      {%- set removes = [] -%}
+      {%- set readds = [] -%}
+      {%- set unproven = [] -%}
+      {%- for v in desired -%}
+      {%- set matching = observed | selectattr('target', 'eq', v.target) | first | default(none) -%}
+      {%- if matching is none -%}
+      {%- set _ = adds.append('--volume=' ~ v.src ~ ':' ~ v.target ~ (':ro' if v.ro else '')) -%}
+      {%- elif matching.src != v.src or matching.ro != v.ro -%}
+      {%- set proven = (managed_resolved | selectattr('src', 'eq', matching.src | realpath)
+                         | selectattr('target', 'eq', matching.target) | list | length) > 0 -%}
+      {%- if proven or bind_mounts_force_remount | bool -%}
+      {%- set _ = adds.append('--volume=' ~ v.src ~ ':' ~ v.target ~ (':ro' if v.ro else '')) -%}
+      {%- set _ = removes.append('--remove-volume=' ~ matching.src ~ ':' ~ matching.target) -%}
+      {%- set _ = readds.append(matching.target) -%}
+      {%- else -%}
+      {%- set _ = unproven.append({'machine': m.name, 'target': matching.target,
+            'observed': matching.src, 'configured': v.src,
+            'ledger': 'a volume is recorded at this target'}) -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- for v in stale -%}
+      {%- set obs_at = observed | selectattr('target', 'eq', v.target) | first | default(none) -%}
+      {%- set _ = removes.append('--remove-volume='
+            ~ (obs_at.src if obs_at is not none else v.src) ~ ':' ~ v.target) -%}
+      {%- endfor -%}
+      {%- for ov in observed -%}
+      {%- if ov.target in desired_targets + stale_targets -%}{%- else -%}
+      {%- set proven = (managed_resolved | selectattr('src', 'eq', ov.src | realpath)
+                         | selectattr('target', 'eq', ov.target) | list | length) > 0 -%}
+      {%- if not proven -%}
+      {%- set _ = unproven.append({'machine': m.name, 'target': ov.target,
+            'observed': ov.src, 'configured': none,
+            'ledger': 'no volume recorded at this target'}) -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- set unproven_targets = unproven | map(attribute='target') | list -%}
+      {%- set external = observed | rejectattr('target', 'in', desired_targets + stale_targets + unproven_targets) | list -%}
+      {%- set _ = result.update({m.name: {
+            'add': adds,
+            'remove': removes,
+            'readd': readds,
+            'unproven': unproven,
+            'external': external,
+            'desired_count': desired | length,
+            'managed_resolved': managed_resolved }}) -%}
+      {%- endfor -%}
+      {{ result }}
+
+
+- name: Show the volume convergence plans
+  ansible.builtin.debug:
+    var: bind_mounts_volume_plans

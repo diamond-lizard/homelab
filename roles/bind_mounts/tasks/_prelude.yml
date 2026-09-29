@@ -1,2 +1,44 @@
 ---
-# No-op stub; the shared prelude checks land with the prelude implementation.
+# Shared prelude: validation and observation only - the phase files own every
+# mutation. Check mode runs every read-only step and refusal here, but skips
+# the run-lock and staging include entirely (no lock, no sweep, no metadata).
+- name: Prelude host-tool check
+  ansible.builtin.include_tasks: _host_tools.yml
+
+- name: Prelude machine-level registry validation
+  ansible.builtin.include_tasks: _registry_validate.yml
+
+- name: Prelude mount-level registry validation
+  ansible.builtin.include_tasks: _mounts_validate.yml
+
+- name: Prelude mount source probes
+  ansible.builtin.include_tasks: _mounts_sources.yml
+
+- name: Prelude normalization
+  ansible.builtin.include_tasks: _normalize.yml
+
+- name: Prelude state-directory exclusivity check
+  ansible.builtin.include_tasks: _state_dir_check.yml
+
+- name: Prelude inventory and vocabulary gate
+  ansible.builtin.include_tasks: _inventory_gate.yml
+
+- name: Prelude ledger read and migration
+  ansible.builtin.include_tasks: _ledger_read.yml
+
+- name: Prelude volume plan
+  ansible.builtin.include_tasks: _volume_plan.yml
+
+- name: Prelude volume-plan refusal data
+  ansible.builtin.include_tasks: _volume_refusals.yml
+
+- name: Prelude completeness check
+  ansible.builtin.include_tasks: _completeness.yml
+
+- name: Prelude run lock (skipped in check mode)
+  ansible.builtin.include_tasks: _lock_staging.yml
+  when: not ansible_check_mode
+
+- name: Prelude staging sweep (skipped in check mode)
+  ansible.builtin.include_tasks: _staging_sweep.yml
+  when: not ansible_check_mode

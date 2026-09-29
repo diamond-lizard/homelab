@@ -1,0 +1,88 @@
+---
+# Prelude step 6: ledger read and the in-memory legacy migration. A missing
+# ledger file means an empty new ledger; a present-but-unreadable one disables
+# every removal and write for this run. The migration touches the working
+# copy only - the file on disk is written by the ledger writers, never here.
+- name: Probe the ledger file
+  ansible.builtin.stat:
+    path: "{{ bind_mounts_state_dir }}/{{ bind_mounts_ledger_file }}"
+  register: bind_mounts_ledger_stat
+
+- name: Read the ledger file bytes
+  ansible.builtin.slurp:
+    src: "{{ bind_mounts_state_dir }}/{{ bind_mounts_ledger_file }}"
+  register: bind_mounts_ledger_raw
+  failed_when: false
+  when: bind_mounts_ledger_stat.stat.exists
+
+- name: Decode the ledger text (empty when absent or unreadable)
+  ansible.builtin.set_fact:
+    bind_mounts_ledger_text: >-
+      {{ (bind_mounts_ledger_raw.content | b64decode)
+         if bind_mounts_ledger_stat.stat.exists
+            and not (bind_mounts_ledger_raw.failed | default(false))
+            and bind_mounts_ledger_raw.content is defined
+         else '' }}
+
+- name: Flag the ledger usable before parsing
+  ansible.builtin.set_fact:
+    bind_mounts_ledger_usable: true
+
+- name: Parse the ledger text
+  block:
+    - name: Parse the ledger (or seed an empty new one)
+      ansible.builtin.set_fact:
+        bind_mounts_ledger_parsed: >-
+          {{ bind_mounts_ledger_text | from_yaml
+             if bind_mounts_ledger_text | length > 0
+             else {'format': 1, 'machines': {}} }}
+  rescue:
+    - name: Flag the ledger unreadable
+      ansible.builtin.set_fact:
+        bind_mounts_ledger_usable: false
+
+- name: Refine the usability flag on a shape mismatch
+  ansible.builtin.set_fact:
+    bind_mounts_ledger_usable: >-
+      {{ bind_mounts_ledger_usable
+         and bind_mounts_ledger_parsed is mapping
+         and (bind_mounts_ledger_parsed.get('machines', none) is mapping) }}
+  when: bind_mounts_ledger_usable
+
+- name: Adopt the working ledger (an unreadable ledger becomes read-only)
+  ansible.builtin.set_fact:
+    bind_mounts_ledger: >-
+      {{ bind_mounts_ledger_parsed if bind_mounts_ledger_usable | bool
+         else {'format': 1, 'machines': {}} }}
+
+- name: Warn when the ledger is unreadable
+  ansible.builtin.debug:
+    msg: >-
+      LEDGER-UNREADABLE: the ledger at
+      {{ bind_mounts_state_dir }}/{{ bind_mounts_ledger_file }} is unreadable
+      or corrupt. Cleanup is disabled for this run: nothing playbook-managed
+      will be removed and nothing will be written. Fix or delete the ledger
+      file to re-enable cleanup.
+  when: not bind_mounts_ledger_usable
+
+- name: Migrate the legacy ledger working copy in memory
+  vars:
+    bind_mounts_top_mode: "{{ bind_mounts_ledger.get('mode', none) }}"
+  ansible.builtin.set_fact:
+    bind_mounts_ledger: >-
+      {%- set mach = {} -%}
+      {%- for bind_mounts_ledger_entry in bind_mounts_ledger.machines | dict2items -%}
+      {%- set e = dict(bind_mounts_ledger_entry.value) -%}
+      {%- set _ = e.pop('installed', none) -%}
+      {%- if e.get('mode', none) is none and bind_mounts_top_mode is not none -%}
+      {%- set _ = e.update({'mode': bind_mounts_top_mode}) -%}
+      {%- endif -%}
+      {%- set _ = mach.update({bind_mounts_ledger_entry.key: e}) -%}
+      {%- endfor -%}
+      {{ {'format': 1, 'machines': mach} }}
+  when: bind_mounts_ledger_usable
+
+- name: Show the migrated working ledger
+  ansible.builtin.debug:
+    var: bind_mounts_ledger
+  when: bind_mounts_ledger_usable and bind_mounts_ledger.machines | length > 0

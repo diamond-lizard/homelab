@@ -1,0 +1,45 @@
+---
+# Prelude step 3: normalized run facts. Applies the registry defaults,
+# realpath-resolves every src (leaf symlinks normalized; the dangling case
+# was already refused), builds each mount's share_path, sorts mounts by
+# ascending target so the deeper of two overlapping guest targets stays
+# visible after convergence, and flattens the machine list under the limit
+# filter.
+- name: Build the normalized scoped machine list
+  ansible.builtin.set_fact:
+    bind_mounts_scoped_machines: >-
+      {%- set out = [] -%}
+      {%- for m in bind_mounts_machines -%}
+      {%- if bind_mounts_limit_parts | length == 0 or m.name in bind_mounts_limit_parts -%}
+      {%- set mounts = [] -%}
+      {%- for mnt in m.mounts | default([]) -%}
+      {%- set share_name = mnt.name | default(mnt.src | basename) -%}
+      {%- set _ = mounts.append({
+            'name': share_name,
+            'src': mnt.src | realpath,
+            'target': mnt.target,
+            'readonly': mnt.readonly | default(false) | bool,
+            'uid_eff': mnt.uid | default(m.uid),
+            'gid_eff': mnt.gid | default(m.gid),
+            'share_path': (m.share_target | default('')) ~ '/' ~ share_name,
+          }) -%}
+      {%- endfor -%}
+      {%- set _ = out.append({
+            'name': m.name,
+            'user': m.user,
+            'uid': m.uid,
+            'gid': m.gid,
+            'mode': m.mode,
+            'share_root': m.share_root | default(''),
+            'share_target': m.share_target | default(''),
+            'profile_path': m.profile_path | default('/home/' ~ m.user ~ '/.bash_profile'),
+            'max_volumes': m.max_volumes | default(4),
+            'mounts': mounts | sort(attribute='target'),
+          }) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Show the normalized scoped machines
+  ansible.builtin.debug:
+    var: bind_mounts_scoped_machines

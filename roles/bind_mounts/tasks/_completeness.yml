@@ -1,0 +1,50 @@
+---
+# Prelude step 8: the volume completeness check. max_volumes counts EVERY
+# volume attached to the machine - a completeness ceiling, not an appetite
+# cap - so the census is every observed volume, each labeled with its
+# provenance. Runs in every phase before mutations, on any machine state.
+- name: Census every observed volume per examined machine
+  ansible.builtin.set_fact:
+    bind_mounts_volume_census: >-
+      {%- set out = {} -%}
+      {%- for m in bind_mounts_scoped_machines -%}
+      {%- set plan = bind_mounts_volume_plans[m.name] -%}
+      {%- set rows = [] -%}
+      {%- for ov in bind_mounts_sections[m.name].mounts -%}
+      {%- set proven = (plan.managed_resolved | selectattr('src', 'eq', ov.src | realpath)
+                         | selectattr('target', 'eq', ov.target) | list | length) > 0 -%}
+      {%- set _ = rows.append({
+            'source': ov.src,
+            'target': ov.target,
+            'ro': ov.ro,
+            'provenance': 'ledger-proven' if proven else 'unproven' }) -%}
+      {%- endfor -%}
+      {%- set _ = out.update({m.name: rows}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Refuse an over-cap machine naming every observed volume
+  vars:
+    bind_mounts_rows: "{{ bind_mounts_volume_census[bind_mounts_capped.name] }}"
+    bind_mounts_census_lines: >-
+      {%- set lines = [] -%}
+      {%- for r in bind_mounts_rows -%}
+      {%- set _ = lines.append(r.source ~ ' -> ' ~ r.target
+            ~ (' (ro)' if r.ro else '') ~ ' (' ~ r.provenance ~ ')') -%}
+      {%- endfor -%}
+      {{ lines | join('; ') }}
+  ansible.builtin.fail:
+    msg: >-
+      COMPLETENESS-REFUSED: machine '{{ bind_mounts_capped.name }}' has
+      {{ bind_mounts_rows | length }} attached volume(s), exceeding
+      max_volumes={{ bind_mounts_capped.max_volumes }}:
+      {{ bind_mounts_census_lines }}. The smolvm volume ceiling is a hard
+      device budget; a volume mounted outside this role is the anomaly. Remove
+      mounts from the registry, raise max_volumes only if you know the machine
+      has headroom, or remove the extra volume(s) by hand; nothing was
+      changed.
+  loop: "{{ bind_mounts_scoped_machines }}"
+  loop_control:
+    loop_var: bind_mounts_capped
+    label: "{{ bind_mounts_capped.name }}"
+  when: bind_mounts_volume_census[bind_mounts_capped.name] | length > bind_mounts_capped.max_volumes
