@@ -1,11 +1,12 @@
 ---
-# Prelude step 9: the run lock. Skipped entirely in check mode (the
-# orchestrator gates this include). The lock is a single exclusive
-# non-blocking flock held by a watchdog holder process that keeps the fd and
-# exits on its own once the ansible-playbook run that launched it dies (found
-# by walking the /proc parent chain), so the kernel releases the lock in all
-# exit paths and there is no stale lock to break. Acquisition staging sweep:
-# _staging_sweep.yml runs after this include.
+# Prelude step 9: the run lock. Skipped entirely in check mode. A watchdog
+# holder keeps an exclusive non-blocking flock on run.lock and exits once the
+# run's anchor playbook pid dies, so the kernel releases the lock in all exit
+# paths; the anchor is discovered in the SYNCHRONOUS task below (the holder
+# itself is detached, async/poll: 0). The anchor match tests every argv
+# element's basename: on shebang console-script hosts the kernel execs python3
+# with the playbook as argv[1], so argv0 alone never names ansible-playbook.
+
 - name: Create the ledger state directory
   ansible.builtin.file:
     path: "{{ bind_mounts_state_dir }}"
@@ -29,16 +30,44 @@
       - -c
       - |
         import glob, os, sys
-        for sent in glob.glob(os.path.join(sys.argv[1], "run.*.holder")):
-            try:
-                pid = int(open(sent).read().strip())
-            except (OSError, ValueError):
-                os.remove(sent)
-                continue
-            if not os.path.exists("/proc/%d" % pid):
-                os.remove(sent)
+        for pattern in ("run.*.holder", "run.anchor.*"):
+            for sent in glob.glob(os.path.join(sys.argv[1], pattern)):
+                try:
+                    dead = not os.path.exists("/proc/%d" % int(open(sent).read().strip()))
+                except (OSError, ValueError):
+                    dead = True
+                if dead: os.remove(sent)
       - "{{ bind_mounts_state_dir }}"
   changed_when: true
+
+- name: Record the ansible run's anchor pid
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import os, sys
+        def ppid(pid):
+            return int(next(l.split()[1] for l in open("/proc/%d/status" % pid)
+                            if l.startswith("PPid:")))
+        def argvs(pid):
+            try: return open("/proc/%d/cmdline" % pid, "rb").read().split(b"\0")
+            except OSError: return []
+        chain, cur = [os.getpid()], ppid(os.getpid())
+        while cur > 1:
+            chain.append(cur)
+            if any(os.path.basename(a) == b"ansible-playbook" for a in argvs(cur)):
+                with open(sys.argv[1], "w") as fh:
+                    fh.write(str(cur))
+                sys.exit(0)
+            nxt = ppid(cur)
+            if nxt >= cur: break
+            cur = nxt
+        sys.stderr.write("no ansible-playbook ancestor found; walked: "
+                         + ", ".join("%d=%s" % (p, (os.path.basename(argvs(p)[0]) if argvs(p) else b"?").decode(errors="replace")) for p in chain) + "\n")
+        sys.exit(5)
+      - "{{ bind_mounts_state_dir }}/run.anchor.{{ bind_mounts_lock_token }}"
+  changed_when: false
 
 - name: Launch the lock watchdog holder
   ansible.builtin.command:
@@ -47,35 +76,17 @@
       - -c
       - |
         import fcntl, json, os, sys, time
-        lock_path, meta_path, sent_path = sys.argv[1], sys.argv[2], sys.argv[3]
+        lock_path, meta_path, sent_path, anchor_path = sys.argv[1:5]
+        try:
+            anchor = int(open(anchor_path).read().strip())
+        except (OSError, ValueError):
+            sys.exit(6)
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             sys.exit(3)
-        def ppid(pid):
-            for line in open("/proc/%d/status" % pid):
-                if line.startswith("PPid:"):
-                    return int(line.split()[1])
-            return 0
-        def argv0(pid):
-            try:
-                return open("/proc/%d/cmdline" % pid, "rb").read().split(b"\0")[0].decode()
-            except OSError:
-                return ""
-        anchor = os.getpid()
-        cur = ppid(anchor)
-        while cur > 1:
-            anchor = cur
-            if os.path.basename(argv0(cur)) == "ansible-playbook":
-                break
-            nxt = ppid(cur)
-            if nxt >= cur:
-                break
-            cur = nxt
-        with open(meta_path, "w") as fh:
-            json.dump({"pid": anchor,
-                       "started-at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, fh)
+        json.dump({"pid": anchor, "started-at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, open(meta_path, "w"))
         with open(sent_path, "w") as fh:
             fh.write(str(os.getpid()))
         while os.path.exists(sent_path) and os.path.exists("/proc/%d" % anchor):
@@ -83,6 +94,7 @@
       - "{{ bind_mounts_state_dir }}/run.lock"
       - "{{ bind_mounts_state_dir }}/run.json"
       - "{{ bind_mounts_state_dir }}/run.{{ bind_mounts_lock_token }}.holder"
+      - "{{ bind_mounts_state_dir }}/run.anchor.{{ bind_mounts_lock_token }}"
   async: 3600
   poll: 0
   register: bind_mounts_lock_holder
