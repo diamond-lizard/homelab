@@ -1,0 +1,84 @@
+---
+# Role interface validation, per reference table C (machine registry shape).
+# Cross-field rules (bind-mode requires share fields; direct-mode share fields
+# warn) live in the prelude, not here: required_iff does not exist.
+argument_specs:
+  main:
+    short_description: Bind-mount provisioning driven by a machine registry
+    description:
+      - Validates the machine registry and dispatches to the selected phase.
+      - Cross-field rules live in the prelude; this spec enforces per-variable shape.
+    options:
+      bind_mounts_phase:
+        type: str
+        choices:
+          - default
+          - attach
+          - mounts
+          - verify
+          - teardown
+        default: default
+      bind_mounts_machines:
+        type: list
+        required: true
+        elements: dict
+        options:
+          name:
+            type: str
+            required: true
+          user:
+            type: str
+            required: true
+          uid:
+            type: int
+            required: true
+          gid:
+            type: int
+            required: true
+          mode:
+            type: str
+            required: true
+            choices:
+              - bind
+              - direct
+          share_root:
+            type: str
+          share_target:
+            type: str
+          profile_path:
+            type: str
+          max_volumes:
+            type: int
+          mounts:
+            type: list
+            elements: dict
+            options:
+              src:
+                type: str
+                required: true
+              target:
+                type: str
+                required: true
+              name:
+                type: str
+              readonly:
+                type: bool
+              uid:
+                type: int
+              gid:
+                type: int
+      bind_mounts_limit_machines:
+        type: list
+        elements: str
+        default: []
+      bind_mounts_force_remount:
+        type: bool
+        default: false
+      bind_mounts_force_allow_prefixes:
+        type: list
+        elements: str
+        default: []
+      bind_mounts_state_dir:
+        type: str
+      bind_mounts_guest_helper_dir:
+        type: str

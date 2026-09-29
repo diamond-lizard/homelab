@@ -1,0 +1,11 @@
+---
+# Lazy defaults for the bind_mounts capability role.
+# bind_mounts_machines intentionally has NO default: it is required operator input.
+bind_mounts_phase: default
+bind_mounts_limit_machines: []
+bind_mounts_force_remount: false
+bind_mounts_force_allow_prefixes: []
+# Derived from the invoking shell's HOME (lookup('env') reads the invoking
+# environment even under become); never spelled ~/... inside a dest.
+bind_mounts_state_dir: "{{ lookup('env', 'HOME') }}/.local/state/bind-mount-on-host-and-guest"
+bind_mounts_guest_helper_dir: /tmp/010-bind-mounts-helpers

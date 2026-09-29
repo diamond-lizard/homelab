@@ -1,0 +1,16 @@
+---
+# Role entry point: the shared prelude, then exactly one phase file.
+# No tags and no tasks_from interface anywhere in this role.
+- name: Run the shared prelude
+  ansible.builtin.include_tasks: _prelude.yml
+
+- name: Refuse a phase outside the allowed set
+  ansible.builtin.fail:
+    msg: >-
+      bind_mounts_phase must be one of: default, attach, mounts, verify,
+      teardown; got '{{ bind_mounts_phase }}'.
+  when: bind_mounts_phase not in ['default', 'attach', 'mounts', 'verify', 'teardown']
+
+- name: Dispatch the selected phase
+  ansible.builtin.include_tasks:
+    file: "phase_{{ bind_mounts_phase }}.yml"
