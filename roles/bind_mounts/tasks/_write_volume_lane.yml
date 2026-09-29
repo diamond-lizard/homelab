@@ -1,0 +1,10 @@
+---
+# Thin wrapper: the volume lane (share_volume plus volumes per entry mode).
+# Included with bind_mounts_volume_payload: machine name -> {'share_volume':
+# bool, 'volumes': [...]}. An empty payload means an observed no-op; nothing
+# is written.
+- name: Write the observed volume lanes
+  vars:
+    bind_mounts_write_deltas: "{{ bind_mounts_volume_payload | default({}) }}"
+  ansible.builtin.include_tasks: _ledger_write.yml
+  tags: [always]

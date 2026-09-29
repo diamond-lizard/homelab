@@ -1,0 +1,17 @@
+---
+# Thin wrapper: the guest-lane clear. A machine that cannot hold a guest bind
+# (observed stopped, or started by this run - a bind does not survive a stop)
+# has its guest_binds lane cleared to []. Included with
+# bind_mounts_clear_payload: machine name -> [] (the value is ignored; only
+# the keys name the machines to clear). Translated into the field shape the
+# shared writer merges ({guest_binds: []}). An empty payload writes nothing.
+- name: Clear the guest bind lanes of machines that cannot hold one
+  vars:
+    bind_mounts_write_deltas: >-
+      {%- set out = {} -%}
+      {%- for bind_mounts_cleared in (bind_mounts_clear_payload | default({})) | dict2items -%}
+      {%- set _ = out.update({bind_mounts_cleared.key: {'guest_binds': []}}) -%}
+      {%- endfor -%}
+      {{ out }}
+  ansible.builtin.include_tasks: _ledger_write.yml
+  tags: [always]

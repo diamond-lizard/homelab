@@ -1,0 +1,39 @@
+---
+# Private helper of _ledger_write.yml: install the rendered ledger with
+# content proof. The render wrote state_dir/<ledger>.tmp one include ago, so
+# the destination re-evaluated HERE must still resolve to those exact bytes:
+# the copy (remote_src, ordinary content-change detection: identical bytes
+# mean 'ok', not 'changed') plus the sha256 assert below fail loudly on both
+# paths when they ever diverge. The temp is removed only after the proof
+# passed, so a mismatch keeps the evidence on disk.
+- name: Copy the rendered ledger content onto the ledger path
+  ansible.builtin.copy:
+    src: "{{ bind_mounts_state_dir }}/{{ bind_mounts_ledger_file }}.tmp"
+    dest: "{{ bind_mounts_state_dir }}/{{ bind_mounts_ledger_file }}"
+    remote_src: true
+    mode: "0644"
+  tags: [always]
+
+- name: Prove the installed ledger equals the rendered temp
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -c
+      - |
+        tmp_sha="$(sha256sum -- "$1" | awk '{print $1}')"
+        dst_sha="$(sha256sum -- "$2" | awk '{print $1}')"
+        if [ "$tmp_sha" != "$dst_sha" ]; then
+          echo "INSTALL-MISMATCH: tmp=$1 sha=$tmp_sha dst=$2 sha=$dst_sha" >&2
+          exit 9
+        fi
+      - ledger-install-proof
+      - "{{ bind_mounts_state_dir }}/{{ bind_mounts_ledger_file }}.tmp"
+      - "{{ bind_mounts_state_dir }}/{{ bind_mounts_ledger_file }}"
+  changed_when: false
+  tags: [always]
+
+- name: Drop the rendered temp once the proof passed
+  ansible.builtin.file:
+    path: "{{ bind_mounts_state_dir }}/{{ bind_mounts_ledger_file }}.tmp"
+    state: absent
+  tags: [always]

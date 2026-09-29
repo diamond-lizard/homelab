@@ -1,0 +1,16 @@
+---
+# Thin wrapper: the host-bind lane. Included with bind_mounts_host_payload:
+# machine name -> list of {target, source, observed} rows (observed: matched
+# or mounted), each optionally carrying triple. Translated into the field
+# shape the shared writer merges ({host_binds: list}); the lane replaces the
+# machine's whole host_binds value. An empty payload writes nothing.
+- name: Write the observed host bind lanes
+  vars:
+    bind_mounts_write_deltas: >-
+      {%- set out = {} -%}
+      {%- for bind_mounts_row in (bind_mounts_host_payload | default({})) | dict2items -%}
+      {%- set _ = out.update({bind_mounts_row.key: {'host_binds': bind_mounts_row.value}}) -%}
+      {%- endfor -%}
+      {{ out }}
+  ansible.builtin.include_tasks: _ledger_write.yml
+  tags: [always]
