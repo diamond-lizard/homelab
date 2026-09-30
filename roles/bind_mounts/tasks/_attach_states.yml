@@ -1,0 +1,68 @@
+---
+# Attach step 1: the observed machine states, re-read through the shared
+# vocabulary gate over the run's single inventory parse, and the derived
+# machine sets the attach phase works from. A running machine with a
+# pending volume change refuses here with the ACTION REQUIRED box.
+- name: Read the observed machine states for the attach phase
+  ansible.builtin.set_fact:
+    bind_mounts_attach_gate: >-
+      {{ bind_mounts_sections
+         | smolvm_state_gate(bind_mounts_scoped_machines | map(attribute='name') | list) }}
+
+- name: Collect the running machines by the gate's classification
+  ansible.builtin.set_fact:
+    bind_mounts_running_machines: >-
+      {{ bind_mounts_attach_gate | dict2items
+         | selectattr('value.classification', 'eq', 'running')
+         | map(attribute='key') | list }}
+
+- name: Collect the not-running machines by the gate's classification
+  ansible.builtin.set_fact:
+    bind_mounts_notrunning_machines: >-
+      {{ bind_mounts_attach_gate | dict2items
+         | selectattr('value.classification', 'eq', 'not-running')
+         | map(attribute='key') | list }}
+
+- name: Collect the machines whose volume plan is non-empty
+  ansible.builtin.set_fact:
+    bind_mounts_planned_machines: >-
+      {%- set out = [] -%}
+      {%- for bind_mounts_plan_item in bind_mounts_volume_plans | dict2items -%}
+      {%- if (bind_mounts_plan_item.value.add + bind_mounts_plan_item.value.remove) | length > 0 -%}
+      {%- set _ = out.append(bind_mounts_plan_item.key) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Collect the running machines with a pending volume change
+  ansible.builtin.set_fact:
+    bind_mounts_pending_running: >-
+      {{ bind_mounts_running_machines
+         | select('in', bind_mounts_planned_machines) | list }}
+
+- name: Collect the machines the attach run applies plans to
+  ansible.builtin.set_fact:
+    bind_mounts_apply_machines: >-
+      {{ bind_mounts_scoped_machines
+         | rejectattr('name', 'in', bind_mounts_running_machines) | list }}
+
+- name: >-
+      ACTION REQUIRED: volume changes are pending on running machines
+  ansible.builtin.fail:
+    msg:
+      - "{{ '=' * 70 }}"
+      - "{{ '%-70s' | format('  Machine(s) running with pending volume changes:') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('    ' ~ (bind_mounts_pending_running | join(', '))) }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('  Volume changes require a not-running machine.') }}"
+      - "{{ '%-70s' | format('  For each machine listed above, run:') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('      smolvm machine stop --name <machine-name>') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('  Then re-run: the attach phase applies the volume changes') }}"
+      - "{{ '%-70s' | format('  to the stopped machine, writes the volume lanes, and') }}"
+      - "{{ '%-70s' | format('  clears its guest bind lanes. Nothing else was changed') }}"
+      - "{{ '%-70s' | format('  by this run.') }}"
+      - "{{ '=' * 70 }}"
+  when: bind_mounts_pending_running | length > 0

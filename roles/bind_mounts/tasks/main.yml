@@ -1,16 +1,45 @@
 ---
-# Role entry point: the shared prelude, then exactly one phase file.
-# No tags and no tasks_from interface anywhere in this role.
+# Role entry point: the shared prelude, then exactly one phase file,
+# then the epilogue from the always block so lock release, staging
+# cleanup, and guest helper cleanup execute on refusal and failure
+# exits as well as success (refusal rendering stays inside the phase
+# body; the epilogue tolerates a prelude failure that never created
+# the lock or staging by guarding on the lock token). No tags and no
+# tasks_from interface anywhere in this role. The default run composes
+# attach, mounts, and verify in order; each phase file stays
+# order-tolerant and writes the ledger only through _ledger_write.yml.
 - name: Run the shared prelude
-  ansible.builtin.include_tasks: _prelude.yml
+  block:
+    - ansible.builtin.include_tasks: _prelude.yml
 
-- name: Refuse a phase outside the allowed set
-  ansible.builtin.fail:
-    msg: >-
-      bind_mounts_phase must be one of: default, attach, mounts, verify,
-      teardown; got '{{ bind_mounts_phase }}'.
-  when: bind_mounts_phase not in ['default', 'attach', 'mounts', 'verify', 'teardown']
+    - name: Refuse a phase outside the allowed set
+      ansible.builtin.fail:
+        msg: >-
+          bind_mounts_phase must be one of: default, attach, mounts,
+          verify, teardown; got '{{ bind_mounts_phase }}'.
+      when: bind_mounts_phase not in ['default', 'attach', 'mounts', 'verify', 'teardown']
 
-- name: Dispatch the selected phase
-  ansible.builtin.include_tasks:
-    file: "phase_{{ bind_mounts_phase }}.yml"
+    - name: Attach only (explicit attach phase)
+      ansible.builtin.include_tasks: phase_attach.yml
+      when: bind_mounts_phase == 'attach'
+
+    - name: Mounts only (explicit mounts phase)
+      ansible.builtin.include_tasks: phase_mounts.yml
+      when: bind_mounts_phase == 'mounts'
+
+    - name: Verify only (explicit verify phase)
+      ansible.builtin.include_tasks: phase_verify.yml
+      when: bind_mounts_phase == 'verify'
+
+    - name: Teardown only (explicit teardown phase)
+      ansible.builtin.include_tasks: phase_teardown.yml
+      when: bind_mounts_phase == 'teardown'
+
+    - name: Default run (attach, then mounts, then verify)
+      block:
+        - ansible.builtin.include_tasks: phase_attach.yml
+        - ansible.builtin.include_tasks: phase_mounts.yml
+        - ansible.builtin.include_tasks: phase_verify.yml
+      when: bind_mounts_phase == 'default'
+  always:
+    - ansible.builtin.include_tasks: _epilogue.yml

@@ -1,0 +1,70 @@
+---
+# Attach step 2: apply the plan to the not-running machines and observe
+# what the run converged. One combined `smolvm machine update` per
+# machine carries the whole plan (adds before removes, matching today's
+# apply tasks); the update computes one final mount set (removes filter
+# the record first, then adds extend it), so a re-add never occupies its
+# target twice. The payload feeds the volume-lane writer; the census
+# refresh keeps the end-of-run summary at the volume set the run left.
+- name: Apply the volume plans to the not-running machines
+  vars:
+    bind_mounts_plan: "{{ bind_mounts_volume_plans[bind_mounts_plan_entry.name] }}"
+  ansible.builtin.command:
+    argv: "{{ ['smolvm', 'machine', 'update', '--name', bind_mounts_plan_entry.name]
+              + bind_mounts_plan.add + bind_mounts_plan.remove }}"
+  loop: "{{ bind_mounts_apply_machines }}"
+  loop_control:
+    loop_var: bind_mounts_plan_entry
+    label: "{{ bind_mounts_plan_entry.name }}"
+  register: bind_mounts_volume_apply
+  changed_when: bind_mounts_volume_apply.rc | default(1) | int == 0
+  failed_when: false
+  when:
+    - (bind_mounts_plan.add + bind_mounts_plan.remove) | length > 0
+    - not ansible_check_mode
+
+- name: Collect the volume payloads of the machines this run converged
+  ansible.builtin.set_fact:
+    bind_mounts_volume_payload: >-
+      {%- set out = {} -%}
+      {%- for r in bind_mounts_volume_apply.results | default([]) -%}
+      {%- set name = r.ansible_loop_var | default('bind_mounts_plan_entry') -%}
+      {%- set name = r[name].name | default(none) -%}
+      {%- if name is not none and (r.rc | default(1) | int == 0) -%}
+      {%- set m = bind_mounts_scoped_machines | selectattr('name', 'eq', name) | first -%}
+      {%- if m.mode == 'bind' -%}
+      {%- set fields = {'share_volume': true, 'volumes': []} -%}
+      {%- else -%}
+      {%- set volumes = [] -%}
+      {%- for mnt in m.mounts -%}
+      {%- set _ = volumes.append({'src': mnt.src, 'target': mnt.target, 'ro': mnt.readonly}) -%}
+      {%- endfor -%}
+      {%- set fields = {'share_volume': false, 'volumes': volumes} -%}
+      {%- endif -%}
+      {%- set _ = out.update({name: fields}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Refresh the observed-volume census for the machines this run converged
+  ansible.builtin.set_fact:
+    bind_mounts_volume_census: >-
+      {%- set out = {} -%}
+      {%- for m in bind_mounts_scoped_machines -%}
+      {%- if m.name in bind_mounts_volume_payload -%}
+      {%- if m.mode == 'bind' -%}
+      {%- set rows = [{'source': m.share_root | realpath, 'target': m.share_target,
+                       'ro': false, 'provenance': 'ledger-proven'}] -%}
+      {%- else -%}
+      {%- set rows = [] -%}
+      {%- for mnt in m.mounts -%}
+      {%- set _ = rows.append({'source': mnt.src, 'target': mnt.target,
+            'ro': mnt.readonly, 'provenance': 'ledger-proven'}) -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- set _ = out.update({m.name: rows}) -%}
+      {%- else -%}
+      {%- set _ = out.update({m.name: bind_mounts_volume_census.get(m.name, [])}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}

@@ -1,7 +1,9 @@
 ---
 # Thin wrapper: the guest-lane clear. A machine that cannot hold a guest bind
-# (observed stopped, or started by this run - a bind does not survive a stop)
-# has its guest_binds lane cleared to []. Included with
+# (classified not-running by the shared vocabulary gate - stopped or created -
+# or started by this run: a bind does not survive a stop, and a machine that
+# has never run holds no bind) has its guest_binds lane cleared to [].
+# Included with
 # bind_mounts_clear_payload: machine name -> [] (the value is ignored; only
 # the keys name the machines to clear). Translated into the field shape the
 # shared writer merges ({guest_binds: []}). An empty payload writes nothing.

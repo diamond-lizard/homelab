@@ -1,2 +1,35 @@
 ---
-# Stub: attach performs host-side volume work on not-running machines.
+# Attach phase: volume convergence for the examined machines, per
+# precondition. Running machines pin their volumes: a pending change
+# refuses with the ACTION REQUIRED box and fails the run; without a
+# pending change the run observes only, nothing applied. Stopped and
+# created machines have their volume plan applied via `smolvm machine
+# update` (a created machine applies because the disposable-machine
+# probe recorded ACCEPT). After applying, the volume lanes are written
+# and every examined machine the shared gate classified not-running
+# (stopped or created) has its guest-bind lanes cleared: such a machine
+# cannot hold a guest bind, so guest mounts cannot exist. Machine
+# states were already classified and refused by the shared gate; no
+# host-bind work and no share-subdirectory creation happens here (an
+# attach run only ever touches the share volume, never per-mount host
+# binds).
+- name: Read the observed machine states for the attach phase
+  ansible.builtin.include_tasks: _attach_states.yml
+
+- name: Apply the volume plans and observe what the run converged
+  ansible.builtin.include_tasks: _attach_apply.yml
+
+- name: Write the converged volume lanes
+  ansible.builtin.include_tasks: _write_volume_lane.yml
+
+- name: Collect the machines that cannot hold a guest bind (not-running)
+  ansible.builtin.set_fact:
+    bind_mounts_clear_payload: >-
+      {{ dict(bind_mounts_notrunning_machines
+              | zip(bind_mounts_notrunning_machines
+                    | map('regex_replace', '.*', '[]'))) }}
+  when: bind_mounts_notrunning_machines | length > 0
+
+- name: Clear the guest bind lanes of the machines that cannot hold one
+  ansible.builtin.include_tasks: _write_guest_clear.yml
+  when: bind_mounts_notrunning_machines | length > 0

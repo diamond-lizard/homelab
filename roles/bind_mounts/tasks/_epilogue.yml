@@ -1,0 +1,92 @@
+---
+# The shared epilogue: always-run finalization for every exit path.
+# Included from main.yml's always block. Every cleanup step is guarded on
+# bind_mounts_lock_token: the token only exists when the lock and staging
+# actually ran, so a check-mode run and a run that failed inside the
+# prelude fall through as pure observation (the summary still prints).
+# Cleanups invoked here: the watchdog holder's release (the holder exits
+# once its sentinel file is removed; a killed run releases via the
+# kernel), the host staging directory, and the run's guest helper copies
+# on machines this run touched (an attach run stages no helpers, so the
+# guest sweep is a no-op here; the mounts phase reuses this epilogue).
+# The volume summary reflects the volume set as the run left it: a phase
+# that converged a machine (the attach phase) refreshes the observed-
+# volume census for that machine after its apply, so converged machines
+# are summarized post-convergence; machines the run only observed keep
+# their prelude census.
+- name: Build the end-of-run volume summary box (printed before the recap)
+  vars:
+    bind_mounts_summary_examined: "{{ bind_mounts_scoped_machines | default([]) }}"
+    bind_mounts_summary_census: "{{ bind_mounts_volume_census | default({}) }}"
+  ansible.builtin.set_fact:
+    bind_mounts_epilogue_box: >-
+      {%- set out = ['=' * 70] -%}
+      {%- set _ = out.append('%-70s' | format('  Observed volumes (source, target, ro state,')) -%}
+      {%- set _ = out.append('%-70s' | format('  provenance, counted against max_volumes):')) -%}
+      {%- set _ = out.append('%-70s' | format('')) -%}
+      {%- for bind_mounts_summary_entry in bind_mounts_summary_examined -%}
+      {%- set rows = bind_mounts_summary_census.get(bind_mounts_summary_entry.name, []) -%}
+      {%- set _ = out.append('%-70s' | format('  ' ~ bind_mounts_summary_entry.name ~ ': '
+              ~ rows | length ~ ' volume(s); max_volumes '
+              ~ bind_mounts_summary_entry.max_volumes)) -%}
+      {%- for r in rows -%}
+      {%- set _ = out.append('%-70s' | format('    ' ~ r.source ~ ' -> ' ~ r.target
+              ~ (' (ro)' if r.ro else '')
+              ~ ' (' ~ r.provenance ~ ')')) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {%- if bind_mounts_summary_examined | length == 0 -%}
+      {%- set _ = out.append('%-70s' | format('  (no machines examined)')) -%}
+      {%- endif -%}
+      {%- set _ = out.append('%-70s' | format('')) -%}
+      {%- set _ = out.append('=' * 70) -%}
+      {{ out }}
+
+- name: Show the end-of-run volume summary (printed before the recap)
+  ansible.builtin.debug:
+    msg: "{{ bind_mounts_epilogue_box }}"
+
+- name: Read the machines this run touched for the helper sweep
+  ansible.builtin.set_fact:
+    bind_mounts_helper_touched: >-
+      {{ (bind_mounts_helper_touched_machines | default([]))
+         | intersect(bind_mounts_scoped_machines | map(attribute='name') | list) }}
+
+- name: Stop the run by releasing the lock holder
+  ansible.builtin.file:
+    path: "{{ bind_mounts_state_dir }}/run.{{ bind_mounts_lock_token }}.holder"
+    state: absent
+  when:
+    - bind_mounts_lock_token is defined
+    - not ansible_check_mode
+
+- name: Remove the per-run staging directory
+  ansible.builtin.file:
+    path: "{{ bind_mounts_state_dir }}/staging"
+    state: absent
+  when:
+    - bind_mounts_lock_token is defined
+    - not ansible_check_mode
+
+- name: Clean up the guest helper copies on the machines this run touched
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ bind_mounts_helper_machine }}"
+      - --
+      - /bin/sh
+      - -c
+      - "rm -rf {{ bind_mounts_guest_helper_dir }}"
+  loop: "{{ bind_mounts_helper_touched }}"
+  loop_control:
+    loop_var: bind_mounts_helper_machine
+    label: "{{ bind_mounts_helper_machine }}"
+  changed_when: false
+  failed_when: false
+  when:
+    - bind_mounts_helper_touched | length > 0
+    - bind_mounts_lock_token is defined
+    - not ansible_check_mode
