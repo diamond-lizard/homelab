@@ -50,7 +50,8 @@
   ansible.builtin.set_fact:
     bind_mounts_helper_touched: >-
       {{ (bind_mounts_helper_touched_machines | default([]))
-         | intersect(bind_mounts_scoped_machines | map(attribute='name') | list) }}
+         | intersect((bind_mounts_scoped_machines | default([]))
+                     | map(attribute='name') | list) }}
 
 - name: Stop the run by releasing the lock holder
   ansible.builtin.file:

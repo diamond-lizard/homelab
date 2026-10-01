@@ -1,0 +1,55 @@
+---
+# Mounts step 1: the host share tree. Bind-mode machines only, regardless of
+# machine state (the tree is host-side): reject a share root that exists as a
+# non-directory, create missing share roots, and create the per-mount
+# subdirectories the host binds sit on. Never world-writable.
+- name: Stat each bind-mode share root
+  ansible.builtin.stat:
+    path: "{{ bind_mounts_share_tree_machine.share_root | realpath }}"
+  loop: "{{ bind_mounts_scoped_machines }}"
+  loop_control:
+    loop_var: bind_mounts_share_tree_machine
+    label: "{{ bind_mounts_share_tree_machine.name }}"
+  register: bind_mounts_share_root_stats
+  when: bind_mounts_share_tree_machine.mode == 'bind'
+
+- name: Reject a share root that exists as a non-directory
+  ansible.builtin.assert:
+    that: >-
+      not bind_mounts_share_root_stats.results[ansible_loop.index0].stat.exists
+      or bind_mounts_share_root_stats.results[ansible_loop.index0].stat.isdir
+    msg: >-
+      share_root {{ bind_mounts_share_tree_machine.share_root }} (machine
+      {{ bind_mounts_share_tree_machine.name }}) exists but is not a directory.
+  loop: "{{ bind_mounts_scoped_machines }}"
+  loop_control:
+    extended: true
+    loop_var: bind_mounts_share_tree_machine
+    label: "{{ bind_mounts_share_tree_machine.name }}"
+  when: bind_mounts_share_tree_machine.mode == 'bind'
+
+- name: Create missing bind-mode share roots
+  ansible.builtin.file:
+    path: "{{ bind_mounts_share_tree_machine.share_root | realpath }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ bind_mounts_scoped_machines }}"
+  loop_control:
+    extended: true
+    loop_var: bind_mounts_share_tree_machine
+    label: "{{ bind_mounts_share_tree_machine.name }}"
+  when: >-
+    bind_mounts_share_tree_machine.mode == 'bind'
+    and not ansible_check_mode
+    and not bind_mounts_share_root_stats.results[ansible_loop.index0].stat.exists
+
+- name: Create the per-mount share subdirectories (any machine state)
+  ansible.builtin.file:
+    path: "{{ bind_mounts_flat_item.host_root }}/{{ bind_mounts_flat_item.name }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ bind_mounts_mounts_flat }}"
+  loop_control:
+    loop_var: bind_mounts_flat_item
+    label: "{{ bind_mounts_flat_item.name }}"
+  when: not ansible_check_mode

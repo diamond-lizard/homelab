@@ -1,0 +1,36 @@
+---
+# Mounts step 5c: the stopped-machine conclusion clear. Runs after the
+# stale-lane cleanup and before every guest refusal site: the stop is the
+# observed event, so it is recorded even when a later refusal fails the run.
+# The clear covers every examined bind-mode not-running machine (attach-phase
+# parity; lane truth follows machine state); the configured-binds refusal
+# box keeps its mounts filter, so only machines that requested binds are
+# named there.
+# The stopped-machine conclusion clear runs here, after the stale-lane cleanup and before every guest refusal site: the stop is the observed event, so it is recorded even when a later refusal fails the run. The clear covers every examined bind-mode not-running machine (attach-phase parity; lane truth follows machine state); the refusal box keeps its mounts filter, so only machines that requested binds are named there.
+- name: Collect the examined bind-mode machines observed as stopped
+  ansible.builtin.set_fact:
+    bind_mounts_stopped_bind: >-
+      {{ bind_mounts_scoped_machines
+         | selectattr('mode', 'eq', 'bind')
+         | selectattr('name', 'in', bind_mounts_notrunning_machines)
+         | map(attribute='name') | list }}
+  changed_when: false
+
+- name: Collect the stopped machines with configured guest binds
+  ansible.builtin.set_fact:
+    bind_mounts_stopped_with_binds: >-
+      {{ bind_mounts_stopped_bind
+         | select('in', bind_mounts_scoped_machines
+             | selectattr('mounts', 'defined')
+             | rejectattr('mounts', 'equalto', [])
+             | map(attribute='name') | list) | list }}
+
+- name: Clear the guest bind lanes of the machines observed as stopped
+  vars:
+    bind_mounts_clear_payload: >-
+      {{ dict(bind_mounts_stopped_bind
+              | zip(bind_mounts_stopped_bind
+                    | map('regex_replace', '.*', '[]'))) }}
+  ansible.builtin.include_tasks: _write_guest_clear.yml
+  when: bind_mounts_stopped_bind | length > 0
+

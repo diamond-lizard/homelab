@@ -1,0 +1,43 @@
+---
+# Mounts step 2a: the device:inode identity re-check of the ledger-stale
+# host binds. A stale target mounted with content whose source no longer
+# carries the recorded identity is foreign: the run never unmounts what it
+# cannot prove it created, so it fails naming the live source.
+- name: Stat the recorded sources of the stale host binds
+  ansible.builtin.stat:
+    path: "{{ bind_mounts_stale_item.source }}"
+  loop: "{{ bind_mounts_stale_host }}"
+  loop_control:
+    loop_var: bind_mounts_stale_item
+    label: "{{ bind_mounts_stale_item.machine }}:{{ bind_mounts_stale_item.target }}"
+  register: bind_mounts_stale_src_stats
+
+- name: Stat the stale host bind targets
+  ansible.builtin.stat:
+    path: "{{ bind_mounts_stale_item.target }}"
+  loop: "{{ bind_mounts_stale_host }}"
+  loop_control:
+    loop_var: bind_mounts_stale_item
+    label: "{{ bind_mounts_stale_item.machine }}:{{ bind_mounts_stale_item.target }}"
+  register: bind_mounts_stale_tgt_stats
+
+- name: Fail on a stale target mounted with a foreign source
+  ansible.builtin.fail:
+    msg: >-
+      {{ bind_mounts_stale_item.target }} (ledger-stale) is mounted with
+      source '{{ (bind_mounts_host_mounts.get(bind_mounts_stale_item.target, {})
+      | dict2items | map(attribute='value.source') | first) | default('unknown') }}'.
+      Unmount it manually, then re-run. This role never unmounts mounts it
+      cannot prove it created; nothing was changed.
+  loop: "{{ bind_mounts_stale_host }}"
+  loop_control:
+    extended: true
+    loop_var: bind_mounts_stale_item
+    label: "{{ bind_mounts_stale_item.machine }}:{{ bind_mounts_stale_item.target }}"
+  when: >-
+    bind_mounts_stale_item.target in bind_mounts_host_mounts
+    and not (bind_mounts_stale_src_stats.results[ansible_loop.index0].stat.exists
+    and bind_mounts_stale_src_stats.results[ansible_loop.index0].stat.dev
+    == bind_mounts_stale_tgt_stats.results[ansible_loop.index0].stat.dev
+    and bind_mounts_stale_src_stats.results[ansible_loop.index0].stat.inode
+    == bind_mounts_stale_tgt_stats.results[ansible_loop.index0].stat.inode)

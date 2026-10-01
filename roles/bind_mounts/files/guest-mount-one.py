@@ -36,8 +36,18 @@ refusal both triples are printed as LIVE:/RECORDED: lines and nothing is
 mutated. It removes at most the one top layer it verified; stack iteration
 (pops one at a time, stops at the first mismatch) stays with the caller.
 
+A kernel //deleted mount root (the mounted directory was unlinked, so
+mountinfo renders the root with a literal '//deleted' suffix) is umounted
+only in the additive deleted-ours form: the host proves the layer ours by
+stripping the marker and matching the stripped root against the recorded
+root (fstype and source equal besides), and passes that verdict as the
+extra argument; without the argument a //deleted layer is refused like any
+other mismatch. //deleted remediation necessarily runs on a running
+machine: a stopped machine holds no guest binds at all.
+
 Usage: guest-mount-one.py <target> <share-source> <uid> <gid> <readonly>
        guest-mount-one.py stale-umount <target> <fstype> <source> <root>
+       guest-mount-one.py stale-umount <target> <fstype> <source> <root> deleted-ours
 Exit codes (ensure form): 0 = already mounted (or remounted) or mounted now;
 3 = foreign mount (never touched); 4 = empty share source (never bound).
 Exit codes (stale-umount form): 0 = the verified bind layer was umounted;
@@ -117,19 +127,44 @@ def print_triple(path):
     print(f"TRIPLE fstype={triple[0]} source={triple[1]} root={triple[2]}")
 
 
-def cmd_stale_umount(target, recorded):
+def cmd_stale_umount(target, recorded, deleted_ours=False):
     live = top_triple(target)
     if live is None:
         print(f"STALE-UMOUNT: {target} is not mounted; nothing to remove", file=sys.stderr)
         return NOT_MOUNTED_RC
     live_line = f"LIVE:     fstype={live[0]} source={live[1]} root={live[2]}"
     recorded_line = f"RECORDED: fstype={recorded[0]} source={recorded[1]} root={recorded[2]}"
-    if live[2] == "/":
+    # A guest bind FROM a propagated host-bind submount renders fsroot '/'
+    # with source 'none': it is not a real filesystem mount. The triple
+    # equality check below licenses the umount only when the recorded triple
+    # (proven ours in the ledger) matches the live one, so a real smolvm
+    # volume (source 'smolvm0') or any genuine filesystem mount still
+    # refuses here.
+    propagated_submount = (live[2] == "/" and live[0] == "virtiofs"
+                           and live[1] == "none" and recorded[2] == "/"
+                           and recorded[0] == "virtiofs"
+                           and recorded[1] == "none")
+    if live[2] == "/" and not propagated_submount:
         print(f"STALE-UMOUNT-REFUSED: {target} holds a real filesystem mount (mountinfo root subpath '/'); this helper never umounts it", file=sys.stderr)
         print(live_line, file=sys.stderr)
         print(recorded_line, file=sys.stderr)
         return REFUSED_RC
-    if live != recorded:
+    if deleted_ours:
+        # The host proved this //deleted layer ours: the marker stripped
+        # from the live root matches the recorded root (fstype and source
+        # equal besides), so the equality check below relaxes to the
+        # stripped root. Wrong or missing proof takes the refusal path.
+        # The //deleted marker also renders inside the SOURCE string
+        # ("tmpfs[/del-src//deleted]"): normalize both sides by stripping any
+        # "[...]" bracket rendering before comparing, as the root relax
+        # already strips the marker from the fsroot.
+        if (live[0], live[1].split('[')[0]) != (recorded[0], recorded[1].split('[')[0]) \
+                or live[2][:-len('//deleted')] != recorded[2]:
+            print(f"STALE-UMOUNT-REFUSED: {target} holds a //deleted layer the host did not prove ours; nothing was changed", file=sys.stderr)
+            print(live_line, file=sys.stderr)
+            print(recorded_line, file=sys.stderr)
+            return REFUSED_RC
+    elif live != recorded:
         print(f"STALE-UMOUNT-REFUSED: {target} holds a different layer than the one recorded at mount time; nothing was changed", file=sys.stderr)
         print(live_line, file=sys.stderr)
         print(recorded_line, file=sys.stderr)
@@ -175,9 +210,16 @@ def main():
             print("usage: guest-mount-one.py stale-umount <target> <fstype> <source> <root>", file=sys.stderr)
             return USAGE_ERR
         return cmd_stale_umount(target, tuple(sys.argv[3:6]))
+    if len(sys.argv) == 7 and sys.argv[1] == "stale-umount" and sys.argv[6] == "deleted-ours":
+        target = sys.argv[2]
+        if not os.path.isabs(target):
+            print("usage: guest-mount-one.py stale-umount <target> <fstype> <source> <root> deleted-ours", file=sys.stderr)
+            return USAGE_ERR
+        return cmd_stale_umount(target, tuple(sys.argv[3:6]), deleted_ours=True)
     if len(sys.argv) != 6:
         print("usage: guest-mount-one.py <target> <share> <uid> <gid> <readonly>", file=sys.stderr)
         print("       guest-mount-one.py stale-umount <target> <fstype> <source> <root>", file=sys.stderr)
+        print("       guest-mount-one.py stale-umount <target> <fstype> <source> <root> deleted-ours", file=sys.stderr)
         return USAGE_ERR
     target, share, owner_uid, owner_gid, readonly = sys.argv[1:6]
 

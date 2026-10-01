@@ -1,0 +1,82 @@
+---
+# Mounts step 8 (last): the refusals of the identity probe fire AFTER the
+# guest work (the live-removal resolution cleans the guest-side bind and
+# ledger while the machine runs; the host-side stale bind then refuses with
+# the stop-first box). Nothing is unmounted that this run's device:inode
+# re-check cannot prove ours; a running machine pins the stale bind behind
+# the stop-first box.
+- name: Refuse what the identity probe refused
+  ansible.builtin.include_tasks: _mounts_host_refusals.yml
+
+- name: Collect the host mount table for the stale-bind checks
+  ansible.builtin.command: findmnt -rn -o TARGET,SOURCE,FSTYPE
+  register: bind_mounts_host_findmnt
+  changed_when: false
+  check_mode: false
+
+- name: Parse the host mount table
+  ansible.builtin.set_fact:
+    bind_mounts_host_mounts: >-
+      {%- set result = {} -%}
+      {%- for line in bind_mounts_host_findmnt.stdout_lines -%}
+      {%- set parts = line.split() -%}
+      {%- if parts | length == 3 -%}
+      {%- set _ = result.update({parts[0]: {'source': parts[1], 'fstype': parts[2]}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ result }}
+
+- name: Collect the ledger-stale host binds of the examined machines
+  ansible.builtin.set_fact:
+    bind_mounts_stale_host: >-
+      {%- set out = [] -%}
+      {%- for bind_mounts_stale_entry in bind_mounts_ledger.machines | dict2items -%}
+      {%- if bind_mounts_stale_entry.key in (bind_mounts_scoped_machines | map(attribute='name') | list) -%}
+      {%- for b in bind_mounts_stale_entry.value.get('host_binds', []) -%}
+      {%- if b.target not in (bind_mounts_mounts_flat | map(attribute='host_target') | list) -%}
+      {%- set _ = out.append(b | combine({'machine': bind_mounts_stale_entry.key})) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Stat the stale identities and refuse foreign content
+  ansible.builtin.include_tasks: _mounts_host_stale_probe.yml
+
+- name: Collect the ledger-stale binds whose machines are running
+  ansible.builtin.set_fact:
+    bind_mounts_stale_stop: >-
+      {{ bind_mounts_stale_host
+         | selectattr('machine', 'in', bind_mounts_running_machines) | list }}
+
+- name: ACTION REQUIRED - ledger-stale mounts need a stopped machine
+  ansible.builtin.fail:
+    msg:
+      - "{{ '%-70s' | format('=' * 69) }}"
+      - "{{ '%-70s' | format('  Machine(s) whose stale mounts need the machine stopped:') }}"
+      - "{{ '%-70s' | format(('    ' ~ (bind_mounts_stale_stop | map(attribute='machine') | unique | join(', ')))[:70]) }}"
+      - "{{ '%-70s' | format('  The machine is running, and its host-side stale bind') }}"
+      - "{{ '%-70s' | format('  cannot be unmounted while it runs. Stop each machine above,') }}"
+      - "{{ '%-70s' | format('      smolvm machine stop --name <machine-name>') }}"
+      - "{{ '%-70s' | format('  then re-run. Nothing else was changed by this run.') }}"
+      - "{{ '%-70s' | format('=' * 69) }}"
+  when: bind_mounts_stale_stop | length > 0
+
+- name: Unmount and prune on the not-running machines
+  ansible.builtin.include_tasks: _mounts_host_stale_cleanup.yml
+
+- name: Drop the cleaned stale rows from the ledger (conclusion write)
+  vars:
+    bind_mounts_stale_cleaned: >-
+      {{ bind_mounts_stale_host
+         | selectattr('machine', 'in', bind_mounts_notrunning_machines)
+         | map(attribute='machine') | unique | list }}
+    bind_mounts_write_deltas: >-
+      {%- set out = {} -%}
+      {%- for bind_mounts_cleaned_machine in bind_mounts_stale_cleaned -%}
+      {%- set _ = out.update({bind_mounts_cleaned_machine: {'host_binds':
+            (bind_mounts_host_payload | default({})).get(bind_mounts_cleaned_machine, [])}}) -%}
+      {%- endfor -%}
+      {{ out }}
+  ansible.builtin.include_tasks: _ledger_write.yml

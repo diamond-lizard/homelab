@@ -1,2 +1,43 @@
 ---
-# Stub: mounts performs host binds plus guest binds on running machines.
+# Mounts phase: state-independent host share-tree work, then the host bind
+# lane, then guest binds on running machines. Bind-mode machines only for
+# bind work; direct-mode machines get a note only. Check mode runs the
+# probes and refusals and mounts nothing.
+#
+# Order: the share tree is prepared regardless of machine state; the
+# identity probe gates every bind change and the host bind lane is written
+# at the observation site; helpers are staged, transferred and preflighted
+# before any guest mutation; stale guest lanes are cleaned through the
+# helper's triple-checked stale-umount; configured guest binds are ensured
+# and their mountinfo triples recorded; the host-stale gate then remediates
+# or refuses the ledger-stale host binds (it must see the carried rows and
+# converge before the start route is named); the configured-guest-binds-
+# on-a-stopped-machine refusal names the start route LAST, after the
+# host-stale remediation has converged.
+- name: Read the machine states and bind-mode mounts for the mounts phase
+  ansible.builtin.include_tasks: _mounts_states.yml
+
+- name: Prepare the host share tree (bind-mode machines, any state)
+  ansible.builtin.include_tasks: _mounts_share_tree.yml
+
+- name: Probe host bind identity, apply binds, write the host lane
+  ansible.builtin.include_tasks: _mounts_host_apply.yml
+
+- name: Preflight and stage the guest helpers on the running machines
+  ansible.builtin.include_tasks: _mounts_guest_stage.yml
+
+- name: Clean the stale guest bind lanes through the helper
+  ansible.builtin.include_tasks: _mounts_guest_stale.yml
+
+- name: Ensure the configured guest binds and write the guest lane
+  ansible.builtin.include_tasks: _mounts_guest_apply.yml
+
+- name: Refuse the host-stale binds the probe refused, remediate the rest
+  ansible.builtin.include_tasks: _mounts_host_stale.yml
+
+# The stopped-machine refusal fires LAST: the host-stale remediation above
+# requires a not-running machine, so it must converge on this run before the
+# start-route refusal names the next step - otherwise stop and re-run would
+# never converge (the refusal would keep preempting the remediation).
+- name: Refuse configured guest binds on the stopped machines (cleared earlier)
+  ansible.builtin.include_tasks: _mounts_stopped.yml

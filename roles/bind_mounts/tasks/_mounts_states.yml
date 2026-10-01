@@ -1,0 +1,57 @@
+---
+# Mounts step 0: the machine states, re-derived from the prelude's single
+# inventory parse through the shared vocabulary gate (each phase owns its
+# state reads), plus the flat bind-mode mount list the host and guest halves
+# work from. Self-contained set_fact tasks only - no same-task siblings.
+- name: Classify the examined machines against the shared vocabulary
+  ansible.builtin.set_fact:
+    bind_mounts_mounts_gate: >-
+      {{ bind_mounts_sections
+         | smolvm_state_gate(bind_mounts_scoped_machines | map(attribute='name') | list) }}
+
+- name: Collect the running machines for the mounts phase
+  ansible.builtin.set_fact:
+    bind_mounts_running_machines: >-
+      {{ bind_mounts_mounts_gate | dict2items
+         | selectattr('value.classification', 'eq', 'running')
+         | map(attribute='key') | list }}
+
+- name: Collect the running bind-mode machines (unfiltered by config)
+  ansible.builtin.set_fact:
+    bind_mounts_running_bind: >-
+      {{ bind_mounts_scoped_machines
+         | selectattr('mode', 'eq', 'bind')
+         | selectattr('name', 'in', bind_mounts_running_machines) | list }}
+
+- name: Collect the not-running machines for the mounts phase
+  ansible.builtin.set_fact:
+    bind_mounts_notrunning_machines: >-
+      {{ bind_mounts_mounts_gate | dict2items
+         | selectattr('value.classification', 'eq', 'not-running')
+         | map(attribute='key') | list }}
+
+- name: Flatten the bind-mode mounts of the examined machines
+  ansible.builtin.set_fact:
+    bind_mounts_mounts_flat: >-
+      {%- set out = [] -%}
+      {%- for bind_mounts_flat_machine in bind_mounts_scoped_machines -%}
+      {%- if bind_mounts_flat_machine.mode == 'bind' -%}
+      {%- set host_root = bind_mounts_flat_machine.share_root | realpath -%}
+      {%- for bind_mounts_flat_mount in bind_mounts_flat_machine.mounts -%}
+      {%- set _ = out.append(bind_mounts_flat_mount | combine({
+            'machine': bind_mounts_flat_machine.name,
+            'host_root': host_root,
+            'host_target': host_root ~ '/' ~ bind_mounts_flat_mount.name})) -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Collect the running bind-mode machines with configured guest binds
+  ansible.builtin.set_fact:
+    bind_mounts_guest_running: >-
+      {{ bind_mounts_scoped_machines
+         | selectattr('mode', 'eq', 'bind')
+         | selectattr('name', 'in', bind_mounts_running_machines)
+         | selectattr('mounts', 'defined')
+         | rejectattr('mounts', 'equalto', []) | list }}

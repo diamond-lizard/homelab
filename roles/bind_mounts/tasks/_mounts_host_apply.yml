@@ -1,0 +1,57 @@
+---
+# Mounts step 3: the host-bind identity probe gates every bind change. The
+# probe keeps the live device:inode re-check and the //deleted exception; it
+# remounts readonly drift and re-binds what it proved ours on a not-running
+# machine, honoring the force switch; it refuses unproven stacks (rc 3) and
+# stale binds on running machines (rc 4), and asks for remediation (rc 10).
+# Check mode runs the probe and the refusals and mounts nothing.
+# The probe itself is a read-only findmnt/stat inspection and runs
+# unprivileged (root is reserved for the mount/umount/remount tasks).
+- name: Probe host bind identity (source vs share subdirectory)
+  vars:
+    bind_mounts_probe_mount: "{{ bind_mounts_mounts_flat[ansible_loop.index0] }}"
+    bind_mounts_probe_recorded: >-
+      {{ (bind_mounts_ledger.machines | default({})).get(bind_mounts_probe_mount.machine, {})
+         .get('host_binds', [])
+         | selectattr('target', 'eq', bind_mounts_probe_mount.host_target)
+         | selectattr('observed', 'defined')
+         | map(attribute='source') | first | default('') }}
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ role_path }}/files/host-bind-probe.py"
+      - "{{ bind_mounts_probe_mount.src }}"
+      - "{{ bind_mounts_probe_mount.host_target }}"
+      - "{{ bind_mounts_probe_recorded }}"
+      - "{{ bind_mounts_probe_mount.machine }}"
+      - "{{ bind_mounts_mounts_gate[bind_mounts_probe_mount.machine].state }}"
+      - "{{ bind_mounts_force_remount | bool | string | lower }}"
+      - "{{ bind_mounts_probe_mount.host_root }}"
+      - "{{ bind_mounts_force_allow_prefixes | to_json }}"
+  loop: "{{ bind_mounts_mounts_flat }}"
+  loop_control:
+    extended: true
+    label: "{{ bind_mounts_mounts_flat[ansible_loop.index0].machine }}:{{ bind_mounts_mounts_flat[ansible_loop.index0].name }}"
+  register: bind_mounts_host_probe
+  changed_when: false
+  check_mode: false
+  failed_when: >-
+    bind_mounts_host_probe.results[ansible_loop.index0].rc | default(10) not in [0, 3, 4, 10]
+
+- name: Compute the per-mount readonly drift
+  ansible.builtin.set_fact:
+    bind_mounts_ro_drift: >-
+      {%- set out = {} -%}
+      {%- for bind_mounts_drift_item in bind_mounts_mounts_flat -%}
+      {%- set probe = bind_mounts_host_probe.results[loop.index0] -%}
+      {%- set ro_now = 'RO-STATE: ro' in (probe.stdout | default('')) -%}
+      {%- set _ = out.update({bind_mounts_drift_item.machine ~ ':' ~ bind_mounts_drift_item.name:
+            bind_mounts_drift_item.readonly != ro_now}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Hand the licensed bind changes to the apply file
+  ansible.builtin.include_tasks: _mounts_host_bind.yml
+
+- name: Write the host lane at the observation site
+  ansible.builtin.include_tasks: _mounts_host_lane.yml

@@ -1,0 +1,82 @@
+---
+# Mounts step 3a: what the identity probe refused. A proven-stale bind on a
+# running machine refuses behind the stop-first box; an unproven stack
+# refuses with the layered box naming the machine, the target, every layer,
+# the exact force switch, and the manual umount command. Nothing mutated.
+- name: Collect the stale binds that need a stopped machine
+  ansible.builtin.set_fact:
+    bind_mounts_probe_stop: >-
+      {{ bind_mounts_host_probe.results | default([])
+         | selectattr('rc', 'defined') | selectattr('rc', 'eq', 4)
+         | map(attribute='item') | list }}
+
+- name: ACTION REQUIRED - stale mounts need a stopped machine
+  ansible.builtin.fail:
+    msg:
+      - "{{ '%-70s' | format('=' * 69) }}"
+      - "{{ '%-70s' | format('  Machine(s) whose stale mounts need the machine stopped:') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format(('    ' ~ (bind_mounts_probe_stop | map(attribute='machine') | unique | join(', ')))[:70]) }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('  The machine is running, and this run cannot replace') }}"
+      - "{{ '%-70s' | format('  these mounts while it runs. Stop each machine above,') }}"
+      - "{{ '%-70s' | format('      smolvm machine stop --name <machine-name>') }}"
+      - "{{ '%-70s' | format('  then re-run. Nothing else was changed by this run.') }}"
+      - "{{ '%-70s' | format('=' * 69) }}"
+  when: bind_mounts_probe_stop | length > 0
+
+- name: Collect the unproven stacks the probe refused
+  ansible.builtin.set_fact:
+    bind_mounts_probe_refused: >-
+      {{ bind_mounts_host_probe.results | default([])
+         | selectattr('rc', 'defined') | selectattr('rc', 'eq', 3)
+         | map(attribute='item') | list }}
+
+- name: Collect the allow prefixes the probe named
+  ansible.builtin.set_fact:
+    bind_mounts_probe_prefixes: >-
+      {%- set out = [] -%}
+      {%- for r in bind_mounts_host_probe.results | default([]) -%}
+      {%- if r.rc | default(-1) | int == 3 -%}
+      {%- for line in r.stdout_lines | default([]) -%}
+      {%- if line.startswith('ALLOW-PREFIX: ') -%}
+      {%- set _ = out.append(line[14:].strip()) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out | unique | list }}
+
+- name: ACTION REQUIRED - stacked host binds this run will not change
+  vars:
+    bind_mounts_refused_box: >-
+      {%- set out = ['=' * 69] -%}
+      {%- set _ = out.append('  Stacked host bind(s) this run will not change:') -%}
+      {%- set _ = out.append('') -%}
+      {%- for r in bind_mounts_host_probe.results | default([]) -%}
+      {%- if r.rc | default(-1) | int == 3 -%}
+      {%- set _ = out.append('  ' ~ r.item.machine ~ ' (target ' ~ r.item.host_target ~ '):') -%}
+      {%- for line in r.stdout_lines | default([]) -%}
+      {%- if line.startswith('LAYER-SRC: ') -%}
+      {%- set _ = out.append('      ' ~ line[11:]) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- set _ = out.append('      manual command: sudo umount ' ~ r.item.host_target) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- set _ = out.append('') -%}
+      {%- set _ = out.append("  A layer marked (not ours) is not this role's own; accept it") -%}
+      {%- set _ = out.append('  explicitly, then re-run with:') -%}
+      {%- set _ = out.append('') -%}
+      {%- set _ = out.append('      -e bind_mounts_force_remount=true') -%}
+      {%- if bind_mounts_probe_prefixes | length > 0 -%}
+      {%- set _ = out.append('      -e bind_mounts_force_allow_prefixes='
+            ~ (bind_mounts_probe_prefixes | join(','))) -%}
+      {%- endif -%}
+      {%- set _ = out.append('') -%}
+      {%- set _ = out.append('  Nothing was mounted, unmounted or otherwise changed.') -%}
+      {%- set _ = out.append('=' * 69) -%}
+      {{ out }}
+  ansible.builtin.fail:
+    msg: "{{ bind_mounts_refused_box }}"
+  when: bind_mounts_probe_refused | length > 0

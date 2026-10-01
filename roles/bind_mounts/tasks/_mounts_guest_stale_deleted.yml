@@ -1,0 +1,46 @@
+---
+# Mounts step 5b-//deleted: the kernel's //deleted exception. A bind whose
+# SOURCE was unlinked under the mount renders the marker in its mountinfo;
+# the host-side matcher (this file) identifies the proven-ours shape from the
+# probe's live read and pops those layers in the helper's deleted-ours form.
+# Only running machines reach here (a stopped one holds none).
+- name: Identify the //deleted layers the kernel still renders ours
+  ansible.builtin.set_fact:
+    bind_mounts_deleted_matches: >-
+      {%- set out = [] -%}
+      {%- for r in bind_mounts_stale_live.results | default([]) | selectattr('bind_mounts_stale_item', 'defined') | list -%}
+      {%- if r.bind_mounts_stale_item.machine in bind_mounts_running_machines
+            and r.stdout | trim | length > 0 -%}
+      {%- set root = r.stdout.split() | last -%}
+      {%- if root.endswith('//deleted') and root[:-9] == r.bind_mounts_stale_item.triple.root -%}
+      {%- set _ = out.append(r.bind_mounts_stale_item) -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: bind_mounts_stale_live.results is defined
+
+- name: Pop the //deleted-proven layers through the helper deleted-ours form
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -c
+      - >-
+        rc=0; for i in 1 2 3 4 5 6 7 8 9 10; do
+        smolvm machine exec --name "$2" -- python3 "$1" stale-umount "$3"
+        "$4" "$5" "$6" deleted-ours; rc=$?; [ "$rc" -ne 0 ] && break; done; exit $rc
+      - bind-mounts-stale-umount
+      - "{{ bind_mounts_guest_helper_dir }}/guest-mount-one.py"
+      - "{{ bind_mounts_deleted_item.machine }}"
+      - "{{ bind_mounts_deleted_item.target }}"
+      - "{{ bind_mounts_deleted_item.triple.fstype }}"
+      - "{{ bind_mounts_deleted_item.triple.source }}"
+      - "{{ bind_mounts_deleted_item.triple.root }}"
+  loop: "{{ bind_mounts_deleted_matches }}"
+  loop_control:
+    loop_var: bind_mounts_deleted_item
+    label: "{{ bind_mounts_deleted_item.machine }}:{{ bind_mounts_deleted_item.target }}"
+  register: bind_mounts_deleted_pop
+  changed_when: "'umounted:' in (bind_mounts_deleted_pop.stdout | default(''))"
+  failed_when: bind_mounts_deleted_pop.rc | default(0) not in [0, 3, 6, 7]
+  when: bind_mounts_deleted_matches | length > 0 and not ansible_check_mode

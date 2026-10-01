@@ -1,0 +1,71 @@
+---
+# Mounts step 6b: the refusals of the guest-bind ensure (a volume now on a
+# configured target; a foreign mount the ledger cannot prove) and the guest
+# lane at the observation site, with the helper's TRIPLE lines recorded so a
+# legacy entry at a still-configured target is re-marked by this re-mount.
+- name: ACTION REQUIRED - guest bind target(s) carrying a machine volume
+  ansible.builtin.fail:
+    msg:
+      - "{{ '=' * 70 }}"
+      - "{{ '%-70s' | format('  Guest bind target(s) carrying an smolvm volume:') }}"
+      - "{{ '%-70s' | format('    ' ~ (bind_mounts_guest_refused.volume | map(attribute='machine') | join(', '))) }}"
+      - "{{ '%-70s' | format('  The helper refused to bind over a volume, and this run did') }}"
+      - "{{ '%-70s' | format('  not unmount anything inside the guest. Never umount these') }}"
+      - "{{ '%-70s' | format('  targets inside the guest. Recovery, with the machine stopped:') }}"
+      - "{{ '%-70s' | format('      smolvm machine stop --name <machine-name>') }}"
+      - "{{ '%-70s' | format('      smolvm machine update --name <machine> --remove-volume=<src>:<tgt>') }}"
+      - "{{ '%-70s' | format('  Nothing else was changed by this run.') }}"
+      - "{{ '=' * 70 }}"
+  when: bind_mounts_guest_refused.volume | length > 0
+
+- name: ACTION REQUIRED - guest mount(s) the ledger cannot prove
+  ansible.builtin.fail:
+    msg:
+      - "{{ '=' * 70 }}"
+      - "{{ '%-70s' | format('  Guest mount(s) the ledger cannot prove:') }}"
+      - "{{ '%-70s' | format('    ' ~ (bind_mounts_guest_refused.unproven | map(attribute='machine') | join(', '))) }}"
+      - "{{ '%-70s' | format('  Unmount each target in the guest, then re-run:') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('      smolvm machine exec --name <machine> -- umount <target>') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('  Nothing else was changed by this run.') }}"
+      - "{{ '=' * 70 }}"
+  when: bind_mounts_guest_refused.unproven | length > 0
+
+- name: Collect the observed guest bind rows with their triples
+  ansible.builtin.set_fact:
+    bind_mounts_guest_payload: >-
+      {%- set out = {} -%}
+      {%- for r in (bind_mounts_guest_mount.results | default([])) -%}
+      {%- if r.rc is defined and r.rc == 0 -%}
+      {%- set how = 'mounted' if ('mounted:' in r.stdout or 'remounted:' in r.stdout)
+            else 'matched' -%}
+      {%- set row = {'target': r.bind_mounts_ensure_item.target, 'source': r.bind_mounts_ensure_item.share_path,
+                     'observed': how} -%}
+      {%- for line in r.stdout.splitlines() -%}
+      {%- if line.startswith('TRIPLE fstype=') -%}
+      {%- set _ = row.update({'triple': {'fstype': line.split()[1][7:],
+            'source': line.split()[2][7:], 'root': line.split()[3][5:]}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- set _ = out.update({r.bind_mounts_ensure_item.machine:
+            (out.get(r.bind_mounts_ensure_item.machine, []) or []) + [row]}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {#- Lane truth follows observation (every examined running bind-mode
+          machine gets its lane written, empty when it has no configured
+          mounts): a zero-bind observation must overwrite ghost rows. -#}
+      {%- for m in bind_mounts_running_bind -%}
+      {%- set _ = out.setdefault(m.name, []) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Write the observed guest bind lanes
+  vars:
+    bind_mounts_write_deltas: >-
+      {%- set out = {} -%}
+      {%- for bind_mounts_guest_row in (bind_mounts_guest_payload | default({})) | dict2items -%}
+      {%- set _ = out.update({bind_mounts_guest_row.key: {'guest_binds': bind_mounts_guest_row.value}}) -%}
+      {%- endfor -%}
+      {{ out }}
+  ansible.builtin.include_tasks: _ledger_write.yml

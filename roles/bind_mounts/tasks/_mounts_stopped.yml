@@ -1,0 +1,21 @@
+---
+# Mounts step 7: the configured-binds refusal. The stopped-machine
+# conclusion write (the collect and the guest-lane clear through the
+# merge-only writer) ran earlier in the stale-guest step, before every
+# guest refusal site; this file renders the ACTION REQUIRED box naming the
+# start route and fails the run.
+- name: ACTION REQUIRED - guest bind mounts need a running machine
+  ansible.builtin.fail:
+    msg:
+      - "{{ '=' * 70 }}"
+      - "{{ '%-70s' | format('  Machine(s) stopped while guest bind mounts were requested:') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('    ' ~ (bind_mounts_stopped_with_binds | join(', '))) }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('  Guest binds need a running machine; nothing was mounted') }}"
+      - "{{ '%-70s' | format('  for them. Start the machines, then re-run:') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('  ansible-playbook playbooks/bind-mounts/bind-mounts.yml --tags start -K') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '=' * 70 }}"
+  when: bind_mounts_stopped_with_binds | length > 0

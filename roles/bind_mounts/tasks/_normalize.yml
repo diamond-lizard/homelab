@@ -12,7 +12,9 @@
       {%- for m in bind_mounts_machines -%}
       {%- if bind_mounts_limit_parts | length == 0 or m.name in bind_mounts_limit_parts -%}
       {%- set mounts = [] -%}
-      {%- for mnt in m.mounts | default([]) -%}
+      {#- an empty YAML mounts body parses as None, not []; the true
+          flag normalizes every falsy value to the declared default -#}
+      {%- for mnt in m.mounts | default([], true) -%}
       {%- set share_name = mnt.name | default(mnt.src | basename) -%}
       {%- set _ = mounts.append({
             'name': share_name,

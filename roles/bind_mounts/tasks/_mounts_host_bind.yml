@@ -1,0 +1,62 @@
+---
+# Mounts step 3b: the bind changes the probe licensed. A drifted bind is
+# remounted with the configured ro state; a remediation answer (rc 10) gets
+# the fresh bind, and a fresh readonly bind is remounted ro. Check mode runs
+# neither.
+- name: Remount host binds whose readonly state drifted
+  ansible.builtin.command:
+    argv:
+      - mount
+      - -o
+      - "remount,{{ 'ro' if bind_mounts_drift_item.readonly else 'rw' }},bind"
+      - "{{ bind_mounts_drift_item.host_target }}"
+  become: true
+  loop: "{{ bind_mounts_mounts_flat }}"
+  loop_control:
+    loop_var: bind_mounts_drift_item
+    extended: true
+    label: "{{ bind_mounts_drift_item.machine }}:{{ bind_mounts_drift_item.name }}"
+  register: bind_mounts_ro_drift_apply
+  changed_when: bind_mounts_ro_drift_apply.rc | default(1) | int == 0
+  when: >-
+    bind_mounts_host_probe.results[ansible_loop.index0].rc | default(10) | int == 0
+    and bind_mounts_ro_drift[bind_mounts_drift_item.machine ~ ':' ~ bind_mounts_drift_item.name]
+    and not ansible_check_mode
+
+- name: Bind the host source directories into the share
+  ansible.builtin.command:
+    argv:
+      - mount
+      - --bind
+      - "{{ bind_mounts_bind_item.src }}"
+      - "{{ bind_mounts_bind_item.host_target }}"
+  become: true
+  loop: "{{ bind_mounts_mounts_flat }}"
+  loop_control:
+    loop_var: bind_mounts_bind_item
+    extended: true
+    label: "{{ bind_mounts_bind_item.machine }}:{{ bind_mounts_bind_item.name }}"
+  register: bind_mounts_host_bind
+  changed_when: bind_mounts_host_bind.rc | default(1) | int == 0
+  when: >-
+    bind_mounts_host_probe.results[ansible_loop.index0].rc | default(10) | int == 10
+    and not ansible_check_mode
+
+- name: Remount the freshly bound readonly host binds
+  ansible.builtin.command:
+    argv:
+      - mount
+      - -o
+      - remount,ro,bind
+      - "{{ bind_mounts_ro_item.host_target }}"
+  become: true
+  loop: "{{ bind_mounts_mounts_flat }}"
+  loop_control:
+    loop_var: bind_mounts_ro_item
+    extended: true
+    label: "{{ bind_mounts_ro_item.machine }}:{{ bind_mounts_ro_item.name }}"
+  changed_when: true
+  when: >-
+    bind_mounts_ro_item.readonly
+    and bind_mounts_host_probe.results[ansible_loop.index0].rc | default(10) | int == 10
+    and not ansible_check_mode

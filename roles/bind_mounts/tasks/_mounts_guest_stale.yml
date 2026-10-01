@@ -1,0 +1,85 @@
+---
+# Mounts step 5: the stale guest bind lanes. A lane row whose target is no
+# longer configured, or whose recorded source drifted from the configured
+# share path, is stale. A stale layer whose target now carries a machine
+# volume is kept and reported (a volume mounts there now). Entries with a
+# recorded triple are umounted through the helper stale-umount subcommand
+# (triple match and bind-type check inside the guest, one pop per attempt);
+# legacy entries without triples are reported, never removed, and are
+# re-marked by the next re-mount of a still-configured target.
+- name: Collect the stale guest bind lanes of the examined machines
+  ansible.builtin.set_fact:
+    bind_mounts_stale_guest: >-
+      {%- set out = [] -%}
+      {%- for bind_mounts_stale_machine in bind_mounts_scoped_machines -%}
+      {%- if bind_mounts_stale_machine.mode == 'bind' -%}
+      {%- set entry = (bind_mounts_ledger.machines | default({})).get(bind_mounts_stale_machine.name, {}) -%}
+      {%- for b in entry.get('guest_binds', []) -%}
+      {%- set wanted = bind_mounts_stale_machine.mounts
+            | selectattr('target', 'eq', b.target) | first | default(none) -%}
+      {%- if wanted is none or (b.source | default('')) != wanted.share_path -%}
+      {%- set _ = out.append({'machine': bind_mounts_stale_machine.name,
+            'target': b.target, 'source': b.source | default(''),
+            'triple': b.get('triple', none)}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Note the stale guest bind targets that now carry a machine volume
+  vars:
+    bind_mounts_kept_rows: >-
+      {%- set out = [] -%}
+      {%- for bind_mounts_kept_item in bind_mounts_stale_guest -%}
+      {%- set vol = (bind_mounts_sections.get(bind_mounts_kept_item.machine, {}).mounts
+            | default([])) | selectattr('target', 'eq', bind_mounts_kept_item.target) | first | default(none) -%}
+      {%- if vol is not none -%}
+      {%- set _ = out.append(bind_mounts_kept_item.machine ~ ': ' ~ bind_mounts_kept_item.target
+            ~ ' (volume: ' ~ vol.src ~ ')') -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  ansible.builtin.debug:
+    msg:
+      - "{{ '%-70s' | format('  Stale guest bind target(s) left in place (a volume is there now):') }}"
+      - "{{ bind_mounts_kept_rows }}"
+      - "{{ '%-70s' | format('  Never umount these targets inside the guest. Recovery, with') }}"
+      - "{{ '%-70s' | format('  the machine stopped (volume changes need one):') }}"
+      - "{{ '%-70s' | format('      smolvm machine stop --name <machine-name>') }}"
+      - "{{ '%-70s' | format('      smolvm machine update --name <machine> --remove-volume=<src>:<tgt>') }}"
+      - "{{ '%-70s' | format('  Nothing else was changed by this run.') }}"
+  when: bind_mounts_kept_rows | length > 0
+
+- name: Note the legacy-format stale guest bind entries (reported, never removed)
+  vars:
+    bind_mounts_legacy_rows: >-
+      {%- set out = [] -%}
+      {%- for bind_mounts_legacy_item in bind_mounts_stale_guest -%}
+      {%- if bind_mounts_legacy_item.triple is none -%}
+      {%- set _ = out.append(bind_mounts_legacy_item.machine ~ ': '
+            ~ bind_mounts_legacy_item.target ~ ' (source ' ~ bind_mounts_legacy_item.source ~ ')') -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  ansible.builtin.debug:
+    msg:
+      - "{{ '%-70s' | format('  Stale guest bind lane(s) recorded without a mountinfo triple:') }}"
+      - "{{ bind_mounts_legacy_rows }}"
+      - "{{ '%-70s' | format('  Legacy entries are reported, never removed: this run cannot') }}"
+      - "{{ '%-70s' | format('  verify them against the live guest layers. A still-configured') }}"
+      - "{{ '%-70s' | format('  target is re-marked with a triple by the re-mount.') }}"
+  # triple KEY is always present in collected rows (value None for legacy
+  # entries): 'defined' would never filter anything - the legacy test is
+  # value-None, not key presence.
+  when: >-
+    (bind_mounts_stale_guest | selectattr('triple', 'none') | list) | length > 0
+
+- name: Remove the recorded stale layers and refuse replaced ones
+  ansible.builtin.include_tasks: _mounts_guest_stale_umount.yml
+
+- name: The stopped-machine conclusion clear (its own file)
+  ansible.builtin.include_tasks: _mounts_guest_stopped_clear.yml
+
+- name: Render the replaced-layer refusal box
+  ansible.builtin.include_tasks: _mounts_guest_stale_refusal.yml

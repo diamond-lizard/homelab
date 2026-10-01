@@ -1,0 +1,36 @@
+---
+# Mounts step 5c: the replaced-layer refusal. The helper refused (rc 6)
+# because the live layer differs from the recorded one; the box prints both
+# triples and the manual command. Nothing was removed at those targets.
+- name: Read the replaced-layer refusals for the box
+  ansible.builtin.set_fact:
+    bind_mounts_stale_refused: >-
+      {{ (bind_mounts_stale_umount.results | default([]))
+         | selectattr('rc', 'defined') | selectattr('rc', 'eq', 6)
+         | map(attribute='bind_mounts_umount_item') | list }}
+
+- name: ACTION REQUIRED - a replaced guest layer this run will not touch
+  vars:
+    bind_mounts_replaced_box: >-
+      {%- set out = ['=' * 70] -%}
+      {%- set _ = out.append('  Replaced guest layer(s) the helper refused to remove:') -%}
+      {%- set _ = out.append('') -%}
+      {%- for r in (bind_mounts_stale_umount.results | default([])) -%}
+      {%- if r.rc | default(-1) | int == 6 -%}
+      {%- set _ = out.append('  ' ~ r.bind_mounts_umount_item.machine ~ ': ' ~ r.bind_mounts_umount_item.target) -%}
+      {%- for line in (r.stderr | default('')).splitlines() -%}
+      {%- if line.startswith(('LIVE:', 'RECORDED:')) -%}
+      {%- set _ = out.append('      ' ~ line) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- set _ = out.append('      manual command: smolvm machine exec --name '
+            ~ r.bind_mounts_umount_item.machine ~ ' -- umount ' ~ r.bind_mounts_umount_item.target) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- set _ = out.append('') -%}
+      {%- set _ = out.append('  Nothing was removed at those targets.') -%}
+      {%- set _ = out.append('=' * 70) -%}
+      {{ out }}
+  ansible.builtin.fail:
+    msg: "{{ bind_mounts_replaced_box }}"
+  when: bind_mounts_stale_refused | length > 0

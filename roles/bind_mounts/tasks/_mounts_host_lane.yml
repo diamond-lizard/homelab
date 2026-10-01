@@ -1,0 +1,65 @@
+---
+# Mounts step 3c: the host lane, written at the observation site. A row's
+# observed marker names the observation behind it (matched / mounted), so
+# consumers reading an entry as ownership proof require the marker. A bind
+# this run did not observe keeps the lane rowless for that mount: the
+# merge-only writer replaces the examined machines' whole lane. A bind the
+# probe refused (rc 3 or rc 4) carries its prior ledger row verbatim, so the
+# next run classifies it stale - remediable stop-first - instead of unproven-stack.
+- name: Collect the observed host bind rows for the examined machines
+  ansible.builtin.set_fact:
+    bind_mounts_host_payload: >-
+      {%- set out = {} -%}
+      {%- for bind_mounts_lane_row in bind_mounts_mounts_flat -%}
+      {%- set flat_idx = loop.index0 -%}
+      {%- set probe = bind_mounts_host_probe.results[flat_idx] -%}
+      {%- set bound = (bind_mounts_host_bind | default({})).results | default([]) -%}
+      {%- set bound_rc = (bound[flat_idx].rc | default(-1)) if flat_idx < (bound | length) else -1 -%}
+      {%- set how = 'matched' if probe.rc | default(10) | int == 0
+            else ('mounted' if bound_rc == 0 else none) -%}
+      {%- if how is not none -%}
+      {%- set row = {'target': bind_mounts_lane_row.host_target,
+                     'source': bind_mounts_lane_row.src, 'observed': how} -%}
+      {%- set _ = out.update({bind_mounts_lane_row.machine:
+            (out.get(bind_mounts_lane_row.machine, []) or []) + [row]}) -%}
+      {%- endif -%}
+      {%- if probe.rc | default(10) | int in [3, 4] -%}
+      {%- set prior = (bind_mounts_ledger.machines | default({})).get(bind_mounts_lane_row.machine, {})
+            .get('host_binds', [])
+            | selectattr('target', 'eq', bind_mounts_lane_row.host_target) | first | default(none) -%}
+      {%- if prior is not none -%}
+      {%- set _ = out.update({bind_mounts_lane_row.machine:
+            (out.get(bind_mounts_lane_row.machine, []) or []) + [prior]}) -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {#- Carry prior ledger rows for targets this run does not configure
+          (deconfigured mounts): step 8 classifies them stale - refuse
+          stop-first on a running machine, unmount and drop the row on a
+          not-running one. Without the carry the lane replace would destroy
+          the row before the stale gate reads it. -#}
+      {%- for bind_mounts_carry_machine in bind_mounts_scoped_machines -%}
+      {%- set bind_mounts_carry_targets = bind_mounts_mounts_flat
+            | selectattr('machine', 'eq', bind_mounts_carry_machine.name)
+            | map(attribute='host_target') | list -%}
+      {%- for bind_mounts_carry_row in (bind_mounts_ledger.machines | default({}))
+            .get(bind_mounts_carry_machine.name, {}).get('host_binds', []) -%}
+      {%- if bind_mounts_carry_row.target not in bind_mounts_carry_targets -%}
+      {%- set _ = out.update({bind_mounts_carry_machine.name:
+            (out.get(bind_mounts_carry_machine.name, []) or []) + [bind_mounts_carry_row]}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Write the observed host bind lanes
+  vars:
+    bind_mounts_write_deltas: >-
+      {%- set out = {} -%}
+      {%- for bind_mounts_lane_row in (bind_mounts_host_payload | default({})) | dict2items -%}
+      {%- if bind_mounts_lane_row.value | length > 0 -%}
+      {%- set _ = out.update({bind_mounts_lane_row.key: {'host_binds': bind_mounts_lane_row.value}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  ansible.builtin.include_tasks: _ledger_write.yml

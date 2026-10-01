@@ -1,0 +1,77 @@
+---
+# Shared per-phase helper staging: each phase stages exactly the helper(s)
+# it executes. Included with bind_mounts_stage_helper_name (a file under
+# roles/bind_mounts/files/) and bind_mounts_stage_machines (the running
+# machines the phase works on). The host staging copy is mode 0600 and
+# user-owned; the transfer is per run via smolvm machine cp into the guest
+# helper directory, where the copy becomes root-owned 0600. Every staged
+# machine accumulates into bind_mounts_helper_touched_machines, the fact
+# the shared epilogue sweeps. Staging writes nothing in check mode; the
+# prelude owns the staging sweep and the epilogue the cleanup.
+- name: Stage the helper under the run's staging directory
+  ansible.builtin.copy:
+    src: "{{ role_path }}/files/{{ bind_mounts_stage_helper_name }}"
+    dest: "{{ bind_mounts_state_dir }}/staging/{{ bind_mounts_stage_helper_name }}"
+    mode: "0600"
+
+- name: Create the guest helper directory on the machines this phase works on
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ bind_mounts_stage_machine.name }}"
+      - --
+      - sh
+      - -c
+      - "mkdir -p {{ bind_mounts_guest_helper_dir }} && chown root:root {{ bind_mounts_guest_helper_dir }} && chmod 0700 {{ bind_mounts_guest_helper_dir }}"
+  loop: "{{ bind_mounts_stage_machines }}"
+  loop_control:
+    loop_var: bind_mounts_stage_machine
+    label: "{{ bind_mounts_stage_machine.name }}"
+  changed_when: true
+  when: not ansible_check_mode
+
+- name: Transfer the staged helper into each machine
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - cp
+      - "{{ bind_mounts_state_dir }}/staging/{{ bind_mounts_stage_helper_name }}"
+      - "{{ bind_mounts_stage_machine.name }}:{{ bind_mounts_guest_helper_dir }}/{{ bind_mounts_stage_helper_name }}"
+  loop: "{{ bind_mounts_stage_machines }}"
+  loop_control:
+    loop_var: bind_mounts_stage_machine
+    label: "{{ bind_mounts_stage_machine.name }}"
+  changed_when: true
+  when: not ansible_check_mode
+
+- name: Own the transferred helper copies (root-owned, 0600)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ bind_mounts_stage_machine.name }}"
+      - --
+      - sh
+      - -c
+      - >-
+        f={{ bind_mounts_guest_helper_dir }}/{{ bind_mounts_stage_helper_name }};
+        if [ -f "$f" ]; then chown root:root "$f" && chmod 0600 "$f"; fi;
+        exit 0
+  loop: "{{ bind_mounts_stage_machines }}"
+  loop_control:
+    loop_var: bind_mounts_stage_machine
+    label: "{{ bind_mounts_stage_machine.name }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Accumulate the machines whose helpers this phase staged
+  ansible.builtin.set_fact:
+    bind_mounts_helper_touched_machines: >-
+      {{ (bind_mounts_helper_touched_machines | default([]))
+         | union(bind_mounts_stage_machines | map(attribute='name') | list) }}

@@ -1,0 +1,62 @@
+---
+# Mounts step 5b: the recorded-triple stale removal. The //deleted exception is
+# evaluated host-side BEFORE the replaced-layer refusal; the helper pops one
+# verified layer per attempt, stopping at the first mismatch. Every guest umount
+# goes through the helper: //deleted-proven layers pop in the deleted-ours form
+# (the host passes its proof verdict), the rest plain. Only running machines reach
+# this file (a stopped one holds none), so //deleted remediation runs on a running machine.
+- name: Probe the live guest layer of each triple-carrying stale lane
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ bind_mounts_stale_item.machine }}"
+      - --
+      - findmnt
+      - -rn
+      - -o
+      - FSTYPE,SOURCE,FSROOT
+      - -M
+      - "{{ bind_mounts_stale_item.target }}"
+  loop: "{{ bind_mounts_stale_guest | selectattr('triple', 'defined')
+         | rejectattr('triple', 'none') | list }}"
+  loop_control:
+    loop_var: bind_mounts_stale_item
+    label: "{{ bind_mounts_stale_item.machine }}:{{ bind_mounts_stale_item.target }}"
+  register: bind_mounts_stale_live
+  changed_when: false
+  check_mode: false
+
+- name: Identify and pop the //deleted-proven layers (their own file)
+  ansible.builtin.include_tasks: _mounts_guest_stale_deleted.yml
+
+- name: Pop the remaining recorded stale layers through the helper stale-umount
+  vars:
+    bind_mounts_deleted_names: "{{ bind_mounts_deleted_matches | default([]) | map(attribute='machine') | list }}"
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -c
+      - >-
+        rc=0; for i in 1 2 3 4 5 6 7 8 9 10; do
+        smolvm machine exec --name "$2" -- python3 "$1" stale-umount "$3"
+        "$4" "$5" "$6"; rc=$?; [ "$rc" -ne 0 ] && break; done; exit $rc
+      - bind-mounts-stale-umount
+      - "{{ bind_mounts_guest_helper_dir }}/guest-mount-one.py"
+      - "{{ bind_mounts_umount_item.machine }}"
+      - "{{ bind_mounts_umount_item.target }}"
+      - "{{ bind_mounts_umount_item.triple.fstype }}"
+      - "{{ bind_mounts_umount_item.triple.source }}"
+      - "{{ bind_mounts_umount_item.triple.root }}"
+  loop: "{{ bind_mounts_stale_guest | selectattr('triple', 'defined')
+         | rejectattr('triple', 'none')
+         | rejectattr('machine', 'in', bind_mounts_deleted_names) | list }}"
+  loop_control:
+    loop_var: bind_mounts_umount_item
+    label: "{{ bind_mounts_umount_item.machine }}:{{ bind_mounts_umount_item.target }}"
+  register: bind_mounts_stale_umount
+  changed_when: "'umounted:' in (bind_mounts_stale_umount.stdout | default(''))"
+  failed_when: bind_mounts_stale_umount.rc | default(0) not in [0, 3, 6, 7]
+  when: not ansible_check_mode

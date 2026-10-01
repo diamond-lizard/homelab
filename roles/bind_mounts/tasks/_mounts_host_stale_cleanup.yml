@@ -1,0 +1,60 @@
+---
+# Mounts step 2b: the remediation half of the stale-host-bind handling. The
+# device:inode re-check above already proved these targets ours; a
+# not-running machine's stale bind is unmounted and its emptied share
+# subdirectory pruned. A running machine never reaches this file (the
+# stop-first box fires first).
+- name: Unmount the proven-stale host binds (not-running machines)
+  ansible.builtin.command:
+    argv: [umount, "{{ bind_mounts_stale_item.target }}"]
+  become: true
+  loop: "{{ bind_mounts_stale_host }}"
+  loop_control:
+    loop_var: bind_mounts_stale_item
+    label: "{{ bind_mounts_stale_item.machine }}:{{ bind_mounts_stale_item.target }}"
+  register: bind_mounts_stale_umount
+  changed_when: bind_mounts_stale_umount.rc | default(1) | int == 0
+  when: >-
+    bind_mounts_stale_item.target in bind_mounts_host_mounts
+    and bind_mounts_stale_item.machine not in bind_mounts_running_machines
+    and not ansible_check_mode
+
+# The prune attempts the rmdir regardless of the mount table snapshot: the
+# table was collected BEFORE the unmount above, so a just-unmounted target
+# still appears mounted there and a gate on it would never prune. rmdir on a
+# mounted or occupied directory fails harmlessly (failed_when false); this
+# file only runs for not-running machines (running ones are refused earlier).
+- name: Prune the emptied stale share subdirectories
+  ansible.builtin.command:
+# The stale bind's target IS the share subdirectory (share_root + name); it
+# is pruned itself, not its parent (the share root always holds other
+# content and is never removed by a prune).
+    argv: [rmdir, "{{ bind_mounts_stale_item.target }}"]
+  loop: "{{ bind_mounts_stale_host }}"
+  loop_control:
+    loop_var: bind_mounts_stale_item
+    label: "{{ bind_mounts_stale_item.machine }}:{{ bind_mounts_stale_item.target }}"
+  register: bind_mounts_stale_prune
+  failed_when: false
+  changed_when: bind_mounts_stale_prune.rc is defined and bind_mounts_stale_prune.rc == 0
+  when: not ansible_check_mode
+
+# DIAGNOSTIC (prune diagnosis): reveal what rmdir actually saw. Remove once
+# the prune failure is explained.
+- name: DEBUG - prune results and the live mount state of the pruned targets
+  vars:
+    bind_mounts_debug_info: >-
+      {%- set out = [] -%}
+      {%- for bind_mounts_debug_item in bind_mounts_stale_prune.results | default([]) -%}
+      {%- set bind_mounts_debug_row = bind_mounts_debug_item.bind_mounts_stale_item -%}
+      {%- set _ = out.append({
+            'item': bind_mounts_debug_row.target,
+            'rc': bind_mounts_debug_item.rc | default(none),
+            'stderr': bind_mounts_debug_item.stderr | default(''),
+            'stdout': bind_mounts_debug_item.stdout | default('')}) -%}
+      {%- endfor -%}
+      {{ out }}
+  ansible.builtin.debug:
+    msg:
+      - "PRUNE-RESULTS: {{ bind_mounts_debug_info }}"
+  changed_when: false
