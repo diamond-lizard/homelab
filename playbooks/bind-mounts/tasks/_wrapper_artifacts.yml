@@ -1,0 +1,842 @@
+---
+# TRANSITION, wrapper-owned (files deleted at the retirement gate). The
+# artifact machinery: install (`--tags install` and the default run, the
+# legacy order after start) and removals. Behavior stays exactly as today
+# per reference table B, except the drift-register row F: the removals
+# key on ARTIFACT PRESENCE PROBES instead of the ledger `installed`
+# field, which the role deletes on migration and never writes. Probes
+# (read-only, safe in check mode) fire only on running machines, which is
+# exactly where removals were possible before; the two stopped-machine
+# refusal boxes keep the legacy `installed`-keyed trigger and stay silent
+# for migrated entries (whose ledger no longer carries the field). The
+# legacy host and guest temp-name sweeps stay. The wrapper performs no
+# ledger writes anywhere (REQ-0200).
+
+# ---- install segment (default run and --tags install) ----
+- name: Fail when install is requested on a stopped machine
+  ansible.builtin.fail:
+    msg: >-
+      Machine '{{ m.name }}' is stopped; installing the bind-mount hook
+      needs a running machine. Run: ansible-playbook playbooks/bind-mounts/bind-mounts.yml
+      --tags start -K, then re-run.
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+    - smolvm_sections[m.name].state != 'running'
+    - not ansible_check_mode
+  tags: [always]
+
+- name: Probe the guest user and home directory
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - sh
+      - -c
+      - 'id -u "$1" >/dev/null && test -d "$2" && echo HOME-OK || echo HOME-MISSING'
+      - sh
+      - "{{ m.user }}"
+      - "{{ m.profile_path | dirname }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: guest_user_probe
+  changed_when: false
+  check_mode: false
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+    - smolvm_sections[m.name].state == 'running'
+  tags: [always]
+
+- name: Fail when the guest user or home directory is missing
+  vars:
+    missing_machines: >-
+      {{ guest_user_probe.results
+         | selectattr('stdout', 'defined')
+         | selectattr('stdout', 'search', 'HOME-MISSING')
+         | map(attribute='m.name') | unique | list }}
+  ansible.builtin.fail:
+    msg: >-
+      {{ missing_machines | length }} machine(s) have no user or no home
+      directory for the configured profile_path inside the guest, so the
+      login hook cannot be installed: {{ missing_machines | join(', ') }}.
+      For each machine listed, create the user and home directory, e.g.:
+      smolvm machine exec --name <machine-name> -- sh -c "useradd -m -u
+      <uid> <user>" (adjust to your guest's user tooling), or set
+      profile_path in vars.yml to an existing directory. Then re-run this
+      playbook. Nothing else was changed by this run.
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - missing_machines | length > 0
+  tags: [always]
+
+- name: Probe the effective exec uid on each running machine
+  ansible.builtin.command: "smolvm machine exec --name {{ m.name }} -- id -u"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: uid_probe
+  changed_when: false
+  check_mode: false
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+    - smolvm_sections[m.name].state == 'running'
+  tags: [always]
+
+- name: Record the exec uid per machine
+  ansible.builtin.set_fact:
+    exec_uids: >-
+      {%- set result = {} -%}
+      {%- for pr in uid_probe.results | default([]) -%}
+      {%- if pr['m'] is defined and pr['m']['name'] is defined -%}
+      {%- set _ = result.update({pr['m']['name']: pr['stdout'] | trim}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ result }}
+  when: ansible_run_tags | intersect(['all', 'install']) | length > 0
+  tags: [always]
+
+- name: Fail when the smolvm exec user is not root
+  ansible.builtin.fail:
+    msg: >-
+      Machine '{{ m.name }}' does not execute commands as root (uid
+      {{ exec_uids.get(m.name, 'unknown') }}). Managing the bind-mount hook
+      requires the smolvm exec user to be root: create or update the
+      machine without a non-root --user default.
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+    - exec_uids.get(m.name, '0') != '0'
+  tags: [always]
+
+- name: Render the guest bind-mount script
+  ansible.builtin.template:
+    src: templates/bind-mount-on-guest.sh.j2
+    dest: "/tmp/bind-mount-on-guest-{{ m.name }}.sh"
+    mode: "0600"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+  tags: [always]
+
+- name: Copy the guest bind-mount script into each machine
+  ansible.builtin.command: "smolvm machine cp /tmp/bind-mount-on-guest-{{ m.name }}.sh {{ m.name }}:{{ installed_script_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: script_copy
+  changed_when: script_copy.rc == 0
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+    - not ansible_check_mode
+  tags: [always]
+
+- name: Set root ownership and permissions on the guest script
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - sh
+      - -c
+      - chown root:root "$1" && chmod 0755 "$1"
+      - sh
+      - "{{ installed_script_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  changed_when: true
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+    - not ansible_check_mode
+  tags: [always]
+
+- name: Copy the profile helper into each machine
+  ansible.builtin.command: "smolvm machine cp {{ playbook_dir }}/files/profile-manage.py {{ m.name }}:/tmp/profile-manage.py"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: helper_copy
+  changed_when: helper_copy.rc == 0
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+    - not ansible_check_mode
+  tags: [always]
+
+- name: Apply the managed .bash_profile block
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - python3
+      - /tmp/profile-manage.py
+      - apply
+      - "{{ m.profile_path }}"
+      - "{{ m.uid | string }}"
+      - "{{ m.gid | string }}"
+      - "{{ installed_script_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: profile_apply
+  changed_when: >-
+    'updated' in profile_apply.stdout or 'replaced' in profile_apply.stdout
+    or 'created' in profile_apply.stdout or 'appended' in profile_apply.stdout
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+    - not ansible_check_mode
+  tags: [always]
+
+- name: Stage the sudoers drop-in on the host
+  ansible.builtin.copy:
+    content: |
+      # Managed by bind-mounts.yml (ansible). DO NOT EDIT; overwritten on re-run.
+      # Allows the primary guest user to trigger the bind-mount script.
+      {{ m.user }} ALL=(root) NOPASSWD: {{ installed_script_guest_path }}
+    dest: "/tmp/bind-mounts-{{ m.name }}.sudoers"
+    mode: "0600"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+  tags: [always]
+
+- name: Copy the sudoers drop-in into each machine
+  ansible.builtin.command: "smolvm machine cp /tmp/bind-mounts-{{ m.name }}.sudoers {{ m.name }}:{{ sudoers_staging_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: sudoers_copy
+  changed_when: sudoers_copy.rc == 0
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+    - not ansible_check_mode
+  tags: [always]
+
+- name: Validate the sudoers drop-in
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - visudo
+      - -cf
+      - "{{ sudoers_staging_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: sudoers_check
+  changed_when: false
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+    - not ansible_check_mode
+  tags: [always]
+
+- name: Activate the sudoers drop-in
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - install
+      - -m
+      - "0440"
+      - -o
+      - root
+      - -g
+      - root
+      - "{{ sudoers_staging_guest_path }}"
+      - "{{ sudoers_dropin_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: sudoers_install
+  changed_when: sudoers_install.rc == 0
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'bind'
+    - not ansible_check_mode
+  tags: [always]
+
+# ---- removals (direct mode via --tags install; teardown sees these from
+# the dispatcher AFTER the role's teardown invocation; drift register row
+# F: the removals and their probes key on artifact presence, running
+# machines only, exactly where removals were possible before) ----
+
+- name: Collect stopped machines that still carry bind-mode artifacts
+  ansible.builtin.set_fact:
+    direct_artifacts_stuck: "{{ direct_artifacts_stuck | default([]) + [m.name] }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'direct'
+    - (wrapper_ledger.machines | default({})).get(m.name, {}).get('installed', {}) | dict2items | selectattr('value') | list | length > 0
+    - smolvm_sections[m.name].state != 'running'
+  tags: [always]
+
+- name: >-
+    ACTION REQUIRED: bind-mode artifacts need a running machine
+  ansible.builtin.debug:
+    msg:
+      - "{{ '=' * 70 }}"
+      - "{{ '%-70s' | format('  Machine(s) stopped while still carrying bind-mode artifacts:') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format(('    ' ~ (direct_artifacts_stuck | join(', ')))[:70])) }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('  The guest script, sudoers drop-in and profile hook can only be') }}"
+      - "{{ '%-70s' | format('  removed while the machine is running.') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('  Run: ansible-playbook playbooks/bind-mounts/bind-mounts.yml --tags start -K') }}"
+      - "{{ '%-70s' | format('  then re-run: the removals run while the machine is up.') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('  No guest artifact was changed by this run.') }}"
+      - "{{ '=' * 70 }}"
+  when: direct_artifacts_stuck | default([]) | length > 0
+  tags: [always]
+
+- name: Stop because bind-mode artifacts need a running machine
+  ansible.builtin.fail:
+    msg: >-
+      ACTION REQUIRED: removing the bind-mode artifacts needs a running
+      machine; start the machine(s) listed in the box above, then re-run.
+  when: direct_artifacts_stuck | default([]) | length > 0
+  tags: [always]
+
+- name: Copy the profile helper for the direct-mode removal
+  ansible.builtin.command: "smolvm machine cp {{ playbook_dir }}/files/profile-manage.py {{ m.name }}:/tmp/profile-manage.py"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: direct_helper_copy
+  changed_when: direct_helper_copy.rc == 0
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'direct'
+    - smolvm_sections[m.name].state == 'running'
+    - not ansible_check_mode
+  tags: [always]
+
+# Presence probes for the three artifacts on the running direct-mode
+# machines (drift register row F): read-only, so they are safe in check
+# mode and run nowhere else.
+- name: Probe the installed guest script (direct mode)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - test
+      - -e
+      - "{{ installed_script_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: direct_script_probe
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'direct'
+    - smolvm_sections[m.name].state == 'running'
+  tags: [always]
+
+- name: Probe the sudoers drop-in (direct mode)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - test
+      - -e
+      - "{{ sudoers_dropin_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: direct_sudoers_probe
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'direct'
+    - smolvm_sections[m.name].state == 'running'
+  tags: [always]
+
+- name: Probe the managed profile block (direct mode)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - sh
+      - -c
+      - grep -q "$1" "$2"
+      - sh
+      - "# BEGIN BIND-MOUNTS MANAGED BLOCK"
+      - "{{ m.profile_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: direct_profile_probe
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'direct'
+    - smolvm_sections[m.name].state == 'running'
+  tags: [always]
+
+- name: Collect the direct-mode machines whose artifacts are present
+  ansible.builtin.set_fact:
+    direct_script_present: >-
+      {{ direct_script_probe.results | default([]) | selectattr('rc', 'defined')
+         | selectattr('rc', 'eq', 0) | map(attribute='item.name') | list }}
+    direct_sudoers_present: >-
+      {{ direct_sudoers_probe.results | default([]) | selectattr('rc', 'defined')
+         | selectattr('rc', 'eq', 0) | map(attribute='item.name') | list }}
+    direct_profile_present: >-
+      {{ direct_profile_probe.results | default([]) | selectattr('rc', 'defined')
+         | selectattr('rc', 'eq', 0) | map(attribute='item.name') | list }}
+  when: ansible_run_tags | intersect(['all', 'install']) | length > 0
+  tags: [always]
+
+- name: Remove the installed guest script (direct mode)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - rm
+      - -f
+      - "{{ installed_script_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: direct_script_rm
+  changed_when: direct_script_rm.rc == 0
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'direct'
+    - smolvm_sections[m.name].state == 'running'
+    - not ansible_check_mode
+    - m.name in direct_script_present
+  tags: [always]
+
+- name: Remove the sudoers drop-in (direct mode)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - rm
+      - -f
+      - "{{ sudoers_dropin_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: direct_sudoers_rm
+  changed_when: direct_sudoers_rm.rc == 0
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'direct'
+    - smolvm_sections[m.name].state == 'running'
+    - not ansible_check_mode
+    - m.name in direct_sudoers_present
+  tags: [always]
+
+- name: Remove the managed .bash_profile block (direct mode)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - python3
+      - /tmp/profile-manage.py
+      - remove
+      - "{{ m.profile_path }}"
+      - "{{ m.uid | string }}"
+      - "{{ m.gid | string }}"
+      - "{{ installed_script_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: direct_profile_rm
+  changed_when: >-
+    direct_profile_rm.rc is defined and direct_profile_rm.rc == 0
+    and 'removed managed block' in direct_profile_rm.stdout
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - m.mode == 'direct'
+    - smolvm_sections[m.name].state == 'running'
+    - not ansible_check_mode
+    - m.name in direct_profile_present
+  tags: [always]
+
+- name: Clean up host-side temp files
+  # The '/tmp/010-bind-mounts' entry is the host-side staging
+  # name from before per-machine staging, not the guest path.
+  vars:
+    temp_paths: >-
+      {%- set paths = ['/tmp/010-bind-mounts'] -%}
+      {%- for m in normalized -%}
+      {%- set _ = paths.append('/tmp/bind-mounts-' ~ m.name ~ '.sudoers') -%}
+      {%- set _ = paths.append('/tmp/bind-mount-on-guest-' ~ m.name ~ '.sh') -%}
+      {%- endfor -%}
+      {{ paths }}
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ temp_paths }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - config.mode == 'bind'
+  tags: [always]
+
+- name: Clean up guest-side temp files
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - sh
+      - -c
+      - >-
+        stale=1;
+        {% if config.mode == 'bind' %}
+        [ -e {{ sudoers_staging_guest_path }} ] && { rm -f {{ sudoers_staging_guest_path }}; stale=0; };
+        [ -e /tmp/profile-manage.py ] && { rm -f /tmp/profile-manage.py; stale=0; };
+        {% endif %}
+        for f in {{ helper_dir_guest_path }}/guest-mount-one.py
+        {{ helper_dir_guest_path }}/guest-verify-one.py
+        /tmp/guest-mount-one.py /tmp/guest-verify-one.py;
+        do case "$(head -n2 "$f" 2>/dev/null)" in
+        *"Managed by bind-mounts.yml"*) rm -f "$f"; stale=0;; esac; done;
+        exit $stale
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: guest_temp_clean
+  changed_when: guest_temp_clean.rc == 0
+  failed_when: guest_temp_clean.rc not in [0, 1]
+  when:
+    - ansible_run_tags | intersect(['all', 'install']) | length > 0
+    - smolvm_sections[m.name].state == 'running'
+    - not ansible_check_mode
+  tags: [always]
+
+# ---- teardown (the dispatcher includes this file again AFTER the role's
+# teardown invocation; the role owns the host binds, volumes, and ledger
+# prune). A teardown machine is stopped, so the probes never fire - the
+# removals never run, exactly as in the legacy play, where these
+# running-gated removals could not fire either; the operative stopped-
+# machine check stays the installed-keyed pending refusal below. ----
+
+- name: Probe the installed guest script (teardown)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - test
+      - -e
+      - "{{ installed_script_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: teardown_script_probe
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - ansible_run_tags | intersect(['teardown']) | length > 0
+    - smolvm_sections[m.name].state == 'running'
+  tags: [always]
+
+- name: Remove the installed guest script (teardown)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - rm
+      - -f
+      - "{{ installed_script_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: teardown_script_rm
+  changed_when: teardown_script_rm.rc == 0
+  when:
+    - ansible_run_tags | intersect(['teardown']) | length > 0
+    - smolvm_sections[m.name].state == 'running'
+    - not ansible_check_mode
+    - m.name in teardown_script_present
+  tags: [always]
+
+- name: Probe the sudoers drop-in (teardown)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - test
+      - -e
+      - "{{ sudoers_dropin_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: teardown_sudoers_probe
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - ansible_run_tags | intersect(['teardown']) | length > 0
+    - smolvm_sections[m.name].state == 'running'
+  tags: [always]
+
+- name: Remove the sudoers drop-in (teardown)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - rm
+      - -f
+      - "{{ sudoers_dropin_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: teardown_sudoers_rm
+  changed_when: teardown_sudoers_rm.rc == 0
+  when:
+    - ansible_run_tags | intersect(['teardown']) | length > 0
+    - smolvm_sections[m.name].state == 'running'
+    - not ansible_check_mode
+    - m.name in teardown_sudoers_present
+  tags: [always]
+
+- name: Probe the managed profile block (teardown)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - sh
+      - -c
+      - grep -q "$1" "$2"
+      - sh
+      - "# BEGIN BIND-MOUNTS MANAGED BLOCK"
+      - "{{ m.profile_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: teardown_profile_probe
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - ansible_run_tags | intersect(['teardown']) | length > 0
+    - smolvm_sections[m.name].state == 'running'
+  tags: [always]
+
+- name: Collect the teardown machines whose artifacts are present
+  ansible.builtin.set_fact:
+    teardown_script_present: >-
+      {{ teardown_script_probe.results | default([]) | selectattr('rc', 'defined')
+         | selectattr('rc', 'eq', 0) | map(attribute='item.name') | list }}
+    teardown_sudoers_present: >-
+      {{ teardown_sudoers_probe.results | default([]) | selectattr('rc', 'defined')
+         | selectattr('rc', 'eq', 0) | map(attribute='item.name') | list }}
+    teardown_profile_present: >-
+      {{ teardown_profile_probe.results | default([]) | selectattr('rc', 'defined')
+         | selectattr('rc', 'eq', 0) | map(attribute='item.name') | list }}
+  when: ansible_run_tags | intersect(['teardown']) | length > 0
+  tags: [always]
+
+- name: Remove the managed .bash_profile block (teardown)
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ m.name }}"
+      - --
+      - python3
+      - /tmp/profile-manage.py
+      - remove
+      - "{{ m.profile_path }}"
+      - "{{ m.uid | string }}"
+      - "{{ m.gid | string }}"
+      - "{{ installed_script_guest_path }}"
+  loop: "{{ normalized }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: teardown_profile_rm
+  changed_when: >-
+    teardown_profile_rm.rc is defined and teardown_profile_rm.rc == 0
+    and 'removed managed block' in teardown_profile_rm.stdout
+  when:
+    - ansible_run_tags | intersect(['teardown']) | length > 0
+    - smolvm_sections[m.name].state == 'running'
+    - not ansible_check_mode
+    - m.name in teardown_profile_present
+  tags: [always]
+
+- name: Collect guest-side artifacts this run could not remove
+  vars:
+    pending: >-
+      {%- set out = [] -%}
+      {%- for m in normalized -%}
+      {%- if smolvm_sections[m.name].state != 'running' -%}
+      {%- set e = (wrapper_ledger.machines | default({})).get(m.name, {}).get('installed', {}) -%}
+      {%- set what = [] -%}
+      {%- if e.get('script', false) -%}{%- set _ = what.append('installed script') -%}{%- endif -%}
+      {%- if e.get('sudoers', false) -%}{%- set _ = what.append('sudoers drop-in') -%}{%- endif -%}
+      {%- if e.get('bash_profile_block', false) -%}{%- set _ = what.append('profile block') -%}{%- endif -%}
+      {%- if what -%}
+      {%- set _ = out.append('%-70s' | format(('    ' ~ m.name ~ ': ' ~ (what | join(', ')))[:70])) -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  ansible.builtin.set_fact:
+    teardown_pending_artifacts: "{{ pending }}"
+  when:
+    - ansible_run_tags | intersect(['all', 'install', 'teardown']) | length > 0
+  tags: [always]
+
+- name: >-
+    ACTION REQUIRED: teardown left guest-side artifacts behind
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['=' * 70,
+          '%-70s' | format('  Stopped machine(s) still carrying guest-side artifacts:'),
+          '%-70s' | format('')]
+         + teardown_pending_artifacts
+         + ['%-70s' | format(''),
+            '%-70s' | format('  Those removals need a running machine. Switch the machine to'),
+            '%-70s' | format('  direct mode and run the default playbook: the converging run'),
+            '%-70s' | format('  removes the bind-mode hook, sudoers rule and script. Then'),
+            '%-70s' | format('  re-run --tags teardown for the host-side residue.'),
+            '%-70s' | format(''),
+            '%-70s' | format('  Nothing else was changed by this run.'),
+            '=' * 70] }}
+  when:
+    - ansible_run_tags | intersect(['teardown']) | length > 0
+    - teardown_pending_artifacts | default([]) | length > 0
+  tags: [always]
+
+- name: Stop because teardown could not remove guest-side artifacts
+  ansible.builtin.fail:
+    msg: "ACTION REQUIRED: guest-side artifacts remain on stopped machine(s); see the box above."
+  when:
+    - ansible_run_tags | intersect(['teardown']) | length > 0
+    - teardown_pending_artifacts | default([]) | length > 0
+  tags: [always]

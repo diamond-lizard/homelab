@@ -54,7 +54,6 @@ class FilterModule(object):
     def filters(self):
         return {
             "smolvm_ls_sections": self.smolvm_ls_sections,
-            "smolvm_unknown_states": self.smolvm_unknown_states,
             "smolvm_rejected_rows": self.smolvm_rejected_rows,
             "smolvm_state_gate": self.smolvm_state_gate,
         }
@@ -76,18 +75,6 @@ class FilterModule(object):
         lines are never reported.
         """
         return _scan(text)[1]
-
-    @staticmethod
-    def smolvm_unknown_states(sections, known, only=None):
-        """List ``"<machine> (<state>)"`` strings for states outside ``known``;
-        ``only`` restricts the report; names missing from ``sections`` are not
-        classified. Tokens are verbatim; a run notices renamed/new states here.
-        """
-        return [
-            f"{name} ({sections[name]['state']})"
-            for name in sorted(set(sections.keys() if only is None else only))
-            if name in sections and sections[name]["state"] not in known
-        ]
 
     @staticmethod
     def smolvm_state_gate(sections, names):
