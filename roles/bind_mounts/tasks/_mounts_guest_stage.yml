@@ -3,44 +3,14 @@
 # guest mutation. Staging goes through the shared per-phase include: the
 # mounts phase stages exactly the helper it executes (guest-mount-one.py).
 # The preflight is the contract the parent guarantees, probed before the run
-# touches the guest; one refusal names the machine and every miss.
+# touches the guest; one refusal names the machine and every miss. The
+# probe and refusal live in the shared preflight file, applied also by the
+# verify phase (a smaller tool set; see the prerequisite matrix).
 - name: Preflight the guest tools and root exec on the running machines
-  ansible.builtin.command:
-    argv:
-      - smolvm
-      - machine
-      - exec
-      - --name
-      - "{{ bind_mounts_stage_machine.name }}"
-      - --
-      - sh
-      - -c
-      - >-
-        for t in python3 findmnt mount umount sh mkdir chown chmod;
-        do command -v "$t" >/dev/null 2>&1 || printf '%s\n' "$t"; done;
-        [ "$(id -u)" = 0 ] || echo ROOT-EXEC
-  loop: "{{ bind_mounts_running_bind }}"
-  loop_control:
-    loop_var: bind_mounts_stage_machine
-    label: "{{ bind_mounts_stage_machine.name }}"
-  register: bind_mounts_guest_preflight
-  changed_when: false
-  check_mode: false
-
-- name: Refuse a machine whose guest contract is incomplete
-  ansible.builtin.fail:
-    msg: >-
-      GUEST-CONTRACT-REFUSED: machine '{{ bind_mounts_stage_result.bind_mounts_stage_machine.name }}'
-      is missing the prerequisites this run needs inside the guest:
-      {{ bind_mounts_stage_result.stdout_lines | join(', ') }}. The role never
-      installs prerequisites and never trusts the image blindly; provision
-      the machine with them first, then re-run. Nothing was changed.
-  loop: "{{ (bind_mounts_guest_preflight.results | default([]))
-         | selectattr('stdout', 'defined') | list }}"
-  loop_control:
-    loop_var: bind_mounts_stage_result
-    label: "{{ bind_mounts_stage_result.bind_mounts_stage_machine.name }}"
-  when: (bind_mounts_stage_result.stdout | default('')) | trim | length > 0
+  vars:
+    bind_mounts_preflight_machines: "{{ bind_mounts_running_bind }}"
+    bind_mounts_preflight_tools: [python3, findmnt, mount, umount, sh, mkdir, chown, chmod]
+  ansible.builtin.include_tasks: _guest_preflight.yml
 
 - name: Stage, transfer, and own the per-run helper copies
   vars:

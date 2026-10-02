@@ -1,39 +1,43 @@
 ---
-# Shared per-lane ledger writer: merges only the observed lanes of the
-# examined machines into the working ledger and replaces the file
-# atomically; every other machine, and every field outside the observed
-# lanes, is kept verbatim. Included through a lane wrapper, which sets
-# bind_mounts_write_deltas: machine name -> dict of the lane fields
-# observed for that machine (a lane field replaces that lane whole).
+# Shared per-lane ledger writer: merges only the examined machines'
+# observed lanes into the working ledger and replaces the file atomically;
+# everything else is kept verbatim, field- and machine-wise. A lane
+# wrapper includes this file and sets bind_mounts_write_deltas: machine
+# name -> dict of the lane fields observed for that machine (a lane field
+# replaces that lane whole).
+#
+# Cumulation and merge-only semantics: each lane's merge starts from the
+# registered snapshot below, never from the fact this file assigns
+# (ansible-core 2.19+ stores set_fact values eagerly across same-run
+# corrections), so the merge is a pure function of one eagerly evaluated
+# register plus the lane's deltas; an examined machine absent from this
+# lane's deltas passes through verbatim - a missing delta key must default
+# to an empty merge, never a dropped machine.
+#
 # Writes are skipped in check mode, when the ledger is present but
 # unreadable (bind_mounts_ledger_usable false), and when no examined lane
 # survived the scope filter. New entries are seeded with the examined
 # machine's registry mode; the top-level mode is recomputed as agree-only.
-# Format stays 1; no installed key is ever written; the file is written as
-# the invoking user, without become, mode 0644, rendered to a temp file
-# beside the ledger and renamed into place, under the managed header; every
-# task is tagged [always] (tags do not propagate into dynamic includes).
-#
-# Cumulation: each merge reads the registered snapshot below, never the
-# fact this file assigns - ansible-core 2.19+ stores set_fact values from
-# Cumulation and merge-only semantics: each lane's merge starts from the registered
-# snapshot below, never from the fact this file assigns, so the merge is a pure
-# function of one eagerly evaluated register plus the lane's deltas; an examined
-# machine absent from this lane's deltas passes through verbatim - a missing delta
-# key must default to an empty merge, never a dropped machine.
 - name: Snapshot the working ledger this merge starts from
   ansible.builtin.debug:
     var: bind_mounts_ledger
   register: bind_mounts_write_base
   tags: [always]
+# The optional bind_mounts_write_drop_machines (default []) names examined
+# machines whose whole ledger entries are pruned from the working ledger
+# instead of merged (the teardown phase); the merge's old-entries loop
+# omits a dropped machine entirely (its entry does not survive the merge),
+# a dropped machine's delta is ignored, and it is never seeded anew.
 
 - name: Count the observed lanes inside the examined scope
   vars:
     bind_mounts_write_examined: "{{ bind_mounts_scoped_machines | map(attribute='name') | list }}"
   ansible.builtin.set_fact:
     bind_mounts_write_count: >-
-      {{ (bind_mounts_write_deltas | default({})) | dict2items
-         | selectattr('key', 'in', bind_mounts_write_examined) | list | length }}
+      {{ ((bind_mounts_write_deltas | default({})) | dict2items
+         | selectattr('key', 'in', bind_mounts_write_examined) | list | length)
+         + (bind_mounts_write_drop_machines | default([])
+         | select('in', bind_mounts_write_examined) | list | length) }}
   tags: [always]
 
 - name: Merge the observed lanes into the working ledger
@@ -51,7 +55,8 @@
       {%- set old = bind_mounts_write_base.bind_mounts_ledger.machines | default({}) -%}
       {%- set machines = {} -%}
       {%- for bind_mounts_entry in old | dict2items -%}
-      {%- if bind_mounts_entry.key in scopes -%}
+      {%- if bind_mounts_entry.key in (bind_mounts_write_drop_machines | default([])) -%}
+      {%- elif bind_mounts_entry.key in scopes -%}
       {%- set _ = machines.update({bind_mounts_entry.key:
             bind_mounts_entry.value | combine(bind_mounts_write_deltas.get(bind_mounts_entry.key, {}))}) -%}
       {%- else -%}
@@ -59,7 +64,8 @@
       {%- endif -%}
       {%- endfor -%}
       {%- for bind_mounts_delta in deltas -%}
-      {%- if bind_mounts_delta.key not in machines -%}
+      {%- if bind_mounts_delta.key not in machines
+         and bind_mounts_delta.key not in (bind_mounts_write_drop_machines | default([])) -%}
       {%- set _ = machines.update({bind_mounts_delta.key:
             {'mode': reg_modes[bind_mounts_delta.key]} | combine(bind_mounts_delta.value)}) -%}
       {%- endif -%}

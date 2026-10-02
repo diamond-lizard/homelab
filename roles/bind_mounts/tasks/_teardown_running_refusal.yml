@@ -1,0 +1,19 @@
+---
+# Teardown refusal: a running machine cannot be torn down (a running VMM
+# pins its share-tree binds). This file renders the ACTION REQUIRED box
+# naming the stop route and fails the run; check mode fires it as well,
+# since it stops before mutating.
+- name: Refuse the running machines and name the stop route
+  ansible.builtin.fail:
+    msg:
+      - "{{ '=' * 70 }}"
+      - "{{ '%-70s' | format('  Machine(s) running while teardown was requested:') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('    ' ~ (bind_mounts_running_machines | join(', '))) }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('  Nothing was unmounted, removed, or pruned.') }}"
+      - "{{ '%-70s' | format('  Stop the machines, then re-run:') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format(      'ansible-playbook playbooks/bind-mounts/bind-mounts.yml --tags stop') }}"
+      - "{{ '=' * 70 }}"
+  when: bind_mounts_running_machines | length > 0

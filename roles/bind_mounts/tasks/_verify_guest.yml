@@ -1,0 +1,85 @@
+---
+# Verify step 3: the guest verify helper per mount, on the running machines.
+# The helper is staged per run through the shared staging include (the helper
+# the verify phase executes), but every exec runs it INLINE the way a check
+# run stages nothing: the copy the role files carry is read into the argv so
+# check mode and real mode verify identically and the staged copy is only
+# the transfer-time artifact. Bind machines verify the guest bind per mount
+# (identity, readonly, single layer); direct machines verify the configured
+# guest volume is present. Skips are a note; failures are collected for the
+# report file. Read-only observation throughout - nothing is written in the
+# guest, so the phase runs in check mode identically.
+- name: Stage, transfer, and own the per-run verify helper copies
+  vars:
+    bind_mounts_stage_helper_name: guest-verify-one.py
+    bind_mounts_stage_machines: |-
+      {{ bind_mounts_scoped_machines
+         | selectattr('name', 'in', bind_mounts_running_machines) | list }}
+  ansible.builtin.include_tasks: _stage_helper.yml
+
+- name: Verify the guest binds of the running bind-mode machines
+  vars:
+    bind_mounts_verify_helper_text: "{{ lookup('file', role_path ~ '/files/guest-verify-one.py') }}"
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ bind_mounts_verify_row.machine }}"
+      - --
+      - python3
+      - -c
+      - "{{ bind_mounts_verify_helper_text }}"
+      - bind
+      - "{{ bind_mounts_verify_row.target }}"
+      - "{{ bind_mounts_verify_row.share_path }}"
+      - "{{ bind_mounts_verify_row.readonly | string | lower }}"
+  loop: "{{ bind_mounts_verify_bind_flat }}"
+  loop_control:
+    loop_var: bind_mounts_verify_row
+    label: "{{ bind_mounts_verify_row.machine }}:{{ bind_mounts_verify_row.target }}"
+  register: bind_mounts_guest_verify_bind
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Verify the guest volumes of the running direct-mode machines
+  vars:
+    bind_mounts_verify_helper_text: "{{ lookup('file', role_path ~ '/files/guest-verify-one.py') }}"
+  ansible.builtin.command:
+    argv:
+      - smolvm
+      - machine
+      - exec
+      - --name
+      - "{{ bind_mounts_verify_row.machine }}"
+      - --
+      - python3
+      - -c
+      - "{{ bind_mounts_verify_helper_text }}"
+      - direct
+      - "{{ bind_mounts_verify_row.target }}"
+  loop: "{{ bind_mounts_verify_direct_flat }}"
+  loop_control:
+    loop_var: bind_mounts_verify_row
+    label: "{{ bind_mounts_verify_row.machine }}:{{ bind_mounts_verify_row.target }}"
+  register: bind_mounts_guest_verify_direct
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Collect the guest verify failures
+  ansible.builtin.set_fact:
+    bind_mounts_guest_verify_failed: >-
+      {%- set out = [] -%}
+      {%- for bind_mounts_guest_result in (bind_mounts_guest_verify_bind.results | default([]))
+             + (bind_mounts_guest_verify_direct.results | default([])) -%}
+      {%- if (bind_mounts_guest_result.rc | default(2)) != 0 -%}
+      {%- set _ = out.append({
+            'machine': bind_mounts_guest_result.bind_mounts_verify_row.machine,
+            'target': bind_mounts_guest_result.bind_mounts_verify_row.target,
+            'detail': (bind_mounts_guest_result.stderr | default('')).splitlines() | last }) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}

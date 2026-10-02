@@ -1,0 +1,36 @@
+---
+# Verify step 2: the host identity check for the running bind-mode
+# machines' mounts - device:inode against the configured source, the
+# readonly state, and exactly one layer. Read-only observation, so it runs
+# in check mode too. Failures are collected; the report file renders them.
+- name: Verify the host bind identity of the running bind machines
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ role_path }}/files/host-verify-one.py"
+      - "{{ bind_mounts_verify_row.src }}"
+      - "{{ bind_mounts_verify_row.host_target }}"
+      - "{{ bind_mounts_verify_row.readonly | string | lower }}"
+  loop: "{{ bind_mounts_verify_bind_flat }}"
+  loop_control:
+    loop_var: bind_mounts_verify_row
+    label: "{{ bind_mounts_verify_row.machine }}:{{ bind_mounts_verify_row.name }}"
+  register: bind_mounts_host_verify
+  changed_when: false
+  check_mode: false
+  failed_when: false
+
+- name: Collect the host verify failures
+  ansible.builtin.set_fact:
+    bind_mounts_host_verify_failed: >-
+      {%- set out = [] -%}
+      {%- for bind_mounts_host_result in (bind_mounts_host_verify.results | default([])) -%}
+      {%- if (bind_mounts_host_result.rc | default(2)) != 0 -%}
+      {%- set _ = out.append({
+            'machine': bind_mounts_host_result.bind_mounts_verify_row.machine,
+            'target': bind_mounts_host_result.bind_mounts_verify_row.host_target,
+            'detail': (bind_mounts_host_result.stderr | default('')).splitlines() | last
+                      | default('no detail') }) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}

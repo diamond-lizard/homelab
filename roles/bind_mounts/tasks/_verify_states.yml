@@ -1,0 +1,57 @@
+---
+# Verify step 0: machine states re-derived from the prelude's single
+# inventory parse through the shared vocabulary gate (each phase owns its
+# state reads), plus the flat per-mode check lists the phase runs.
+# Self-contained set_fact tasks only - no same-task siblings.
+- name: Classify the examined machines against the shared vocabulary
+  ansible.builtin.set_fact:
+    bind_mounts_verify_gate: >-
+      {{ bind_mounts_sections
+         | smolvm_state_gate(bind_mounts_scoped_machines | map(attribute='name') | list) }}
+
+- name: Collect the running machines for the verify phase
+  ansible.builtin.set_fact:
+    bind_mounts_running_machines: >-
+      {{ bind_mounts_verify_gate | dict2items
+         | selectattr('value.classification', 'eq', 'running')
+         | map(attribute='key') | list }}
+
+- name: Collect the not-running machines for the verify phase
+  ansible.builtin.set_fact:
+    bind_mounts_notrunning_machines: >-
+      {{ bind_mounts_verify_gate | dict2items
+         | selectattr('value.classification', 'eq', 'not-running')
+         | map(attribute='key') | list }}
+
+- name: Flatten the bind-mode mounts of the running machines
+  ansible.builtin.set_fact:
+    bind_mounts_verify_bind_flat: >-
+      {%- set out = [] -%}
+      {%- for bind_mounts_verify_machine in bind_mounts_scoped_machines -%}
+      {%- if bind_mounts_verify_machine.mode == 'bind'
+         and bind_mounts_verify_machine.name in bind_mounts_running_machines -%}
+      {%- set host_root = bind_mounts_verify_machine.share_root | realpath -%}
+      {%- for bind_mounts_verify_mount in bind_mounts_verify_machine.mounts -%}
+      {%- set _ = out.append(bind_mounts_verify_mount | combine({
+            'machine': bind_mounts_verify_machine.name,
+            'host_root': host_root,
+            'host_target': host_root ~ '/' ~ bind_mounts_verify_mount.name})) -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Flatten the direct-mode mounts of the running machines
+  ansible.builtin.set_fact:
+    bind_mounts_verify_direct_flat: >-
+      {%- set out = [] -%}
+      {%- for bind_mounts_verify_machine in bind_mounts_scoped_machines -%}
+      {%- if bind_mounts_verify_machine.mode == 'direct'
+         and bind_mounts_verify_machine.name in bind_mounts_running_machines -%}
+      {%- for bind_mounts_verify_mount in bind_mounts_verify_machine.mounts -%}
+      {%- set _ = out.append(bind_mounts_verify_mount | combine({
+            'machine': bind_mounts_verify_machine.name})) -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}

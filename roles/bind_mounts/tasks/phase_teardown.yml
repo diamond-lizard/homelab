@@ -1,2 +1,27 @@
 ---
-# Stub: teardown performs host-side teardown on machines not running.
+# Teardown phase: host-side teardown of the examined machines. A running
+# machine refuses with the ACTION REQUIRED box naming the stop route (the
+# wrapper holds stop in transition); the not-running machines have their
+# host binds unmounted, their emptied share subdirectories pruned, and
+# their ledger-recorded volumes removed (per entry mode). The torn-down
+# machines' ledger entries are pruned, every untouched machine kept
+# verbatim. The role never touches guest artifacts here (it installs
+# nothing persistent in guests; the guest prerequisites remain the
+# parent's contract). Check mode performs the refusals and mutates
+# nothing: the mount table, the share tree, and the ledger stay as they are.
+- name: Read the observed machine states for the teardown phase
+  ansible.builtin.include_tasks: _teardown_states.yml
+
+- name: Refuse the running machines with the stop route
+  ansible.builtin.include_tasks: _teardown_running_refusal.yml
+
+- name: Unmount the host binds and prune the emptied subdirectories
+  ansible.builtin.include_tasks: _teardown_host.yml
+
+- name: Remove the recorded volumes of the not-running machines
+  ansible.builtin.include_tasks: _teardown_volumes.yml
+
+- name: Write the volume lanes and prune the torn-down entries
+  vars:
+    bind_mounts_teardown_machines: "{{ bind_mounts_notrunning_machines }}"
+  ansible.builtin.include_tasks: _write_teardown_rows.yml

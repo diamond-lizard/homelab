@@ -1,0 +1,52 @@
+---
+# Teardown step 3: remove the ledger-recorded volumes of the not-running
+# machines, per entry mode: the share volume for a bind entry, the recorded
+# volume list for a direct entry. Each removal names the source the machine
+# reports while the volume is still listed in the machine's inventory row,
+# the ledger's recorded source resolved otherwise. The removals ride one
+# combined `smolvm machine update` per machine; the volume lanes are
+# written and the torn-down machines' entries pruned by the writer file.
+- name: Collect the recorded volume removals of the not-running machines
+  ansible.builtin.set_fact:
+    bind_mounts_teardown_removals: >-
+      {%- set out = {} -%}
+      {%- for bind_mounts_teardown_machine in bind_mounts_scoped_machines -%}
+      {%- set m = bind_mounts_teardown_machine -%}
+      {%- if m.name in bind_mounts_notrunning_machines -%}
+      {%- set observed = bind_mounts_sections[m.name].mounts -%}
+      {%- set entry = (bind_mounts_ledger.machines | default({})).get(m.name, {}) -%}
+      {%- set removes = [] -%}
+      {%- if m.mode == 'bind' and entry.get('share_volume', false) -%}
+      {%- set listed = observed | selectattr('target', 'eq', m.share_target)
+             | first | default(none) -%}
+      {%- set src = m.share_root | realpath if listed is none else listed.src -%}
+      {%- set _ = removes.append('--remove-volume=' ~ src ~ ':' ~ m.share_target) -%}
+      {%- endif -%}
+      {%- if m.mode == 'direct' -%}
+      {%- for v in entry.get('volumes', []) -%}
+      {%- set listed = observed | selectattr('target', 'eq', v.target)
+             | first | default(none) -%}
+      {%- set src = v.src if listed is none else listed.src -%}
+      {%- set _ = removes.append('--remove-volume=' ~ src ~ ':' ~ v.target) -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- if removes | length > 0 -%}
+      {%- set _ = out.update({m.name: removes}) -%}
+      {%- endif -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Remove the recorded volumes from the not-running machines
+  ansible.builtin.command:
+    argv: >-
+      {{ ['smolvm', 'machine', 'update', '--name', bind_mounts_teardown_entry.key]
+         + bind_mounts_teardown_removals[bind_mounts_teardown_entry.key] }}
+  loop: "{{ bind_mounts_teardown_removals | dict2items }}"
+  loop_control:
+    loop_var: bind_mounts_teardown_entry
+    label: "{{ bind_mounts_teardown_entry.key }}"
+  register: bind_mounts_teardown_volume_apply
+  changed_when: bind_mounts_teardown_volume_apply.rc | default(1) | int == 0
+  failed_when: false
+  when: not ansible_check_mode

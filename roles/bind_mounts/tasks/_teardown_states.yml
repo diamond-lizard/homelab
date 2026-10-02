@@ -1,0 +1,53 @@
+---
+# Teardown step 0: machine states re-derived from the prelude's single
+# inventory parse through the shared vocabulary gate, plus the teardown
+# bind list per not-running machine: every currently configured host bind
+# (share root + mount name) plus every host-bind row the ledger proves for
+# the machine (including stale rows for deconfigured mounts), deduplicated
+# by target - teardown clears every bind this role mounted for the machine,
+# and foreign state is never adopted. Work is host-side and volume-side
+# only; the guest holds no role artifacts (the role installs nothing).
+- name: Classify the examined machines against the shared vocabulary
+  ansible.builtin.set_fact:
+    bind_mounts_teardown_gate: >-
+      {{ bind_mounts_sections
+         | smolvm_state_gate(bind_mounts_scoped_machines | map(attribute='name') | list) }}
+
+- name: Collect the running machines for the teardown phase
+  ansible.builtin.set_fact:
+    bind_mounts_running_machines: >-
+      {{ bind_mounts_teardown_gate | dict2items
+         | selectattr('value.classification', 'eq', 'running')
+         | map(attribute='key') | list }}
+
+- name: Collect the not-running machines for the teardown phase
+  ansible.builtin.set_fact:
+    bind_mounts_notrunning_machines: >-
+      {{ bind_mounts_teardown_gate | dict2items
+         | selectattr('value.classification', 'eq', 'not-running')
+         | map(attribute='key') | list }}
+
+- name: Flatten the host binds the not-running machines can be torn down
+  ansible.builtin.set_fact:
+    bind_mounts_teardown_binds: >-
+      {%- set out = [] -%}
+      {%- for bind_mounts_teardown_machine in bind_mounts_scoped_machines -%}
+      {%- set m = bind_mounts_teardown_machine -%}
+      {%- if m.mode == 'bind' and m.name in bind_mounts_notrunning_machines
+         and m.share_root | default('', true) | length > 0 -%}
+      {%- set seen = [] -%}
+      {%- for bind_mounts_teardown_mount in m.mounts -%}
+      {%- set tgt = (m.share_root | realpath) ~ '/' ~ bind_mounts_teardown_mount.name -%}
+      {%- set _ = seen.append(tgt) -%}
+      {%- set _ = out.append({'machine': m.name, 'target': tgt}) -%}
+      {%- endfor -%}
+      {%- for bind_mounts_teardown_row in (bind_mounts_ledger.machines
+            | default({})).get(m.name, {}).get('host_binds', []) -%}
+      {%- if bind_mounts_teardown_row.target not in seen -%}
+      {%- set _ = seen.append(bind_mounts_teardown_row.target) -%}
+      {%- set _ = out.append({'machine': m.name, 'target': bind_mounts_teardown_row.target}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}

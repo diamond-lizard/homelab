@@ -1,0 +1,25 @@
+---
+# Thin wrapper: the teardown writes. The torn-down machines are dropped
+# from the ledger whole (their entries go away with the machine); the
+# volume-lane write first records the emptied volumes for the removed
+# machine payload (provenance if a run is interrupted mid-teardown), the
+# drop write then prunes every torn-down machine's entry, keeping every
+# untouched machine verbatim. Empty payloads write nothing.
+- name: Write the emptied volume lanes of the torn-down machines
+  vars:
+    bind_mounts_write_deltas: >-
+      {%- set out = {} -%}
+      {%- for bind_mounts_teardown_dropped in bind_mounts_teardown_machines -%}
+      {%- set _ = out.update({bind_mounts_teardown_dropped: {'share_volume': false, 'volumes': []}}) -%}
+      {%- endfor -%}
+      {{ out }}
+    bind_mounts_write_drop_machines: []
+  ansible.builtin.include_tasks: _ledger_write.yml
+  tags: [always]
+
+- name: Prune the torn-down machines' entries from the ledger
+  vars:
+    bind_mounts_write_deltas: {}
+    bind_mounts_write_drop_machines: "{{ bind_mounts_teardown_machines }}"
+  ansible.builtin.include_tasks: _ledger_write.yml
+  tags: [always]

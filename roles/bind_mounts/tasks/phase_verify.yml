@@ -1,2 +1,29 @@
 ---
-# Stub: verify observes running machines only.
+# Verify phase: read-only verification per examined machine by its entry
+# mode. Bind machines get the host identity check (device:inode against the
+# configured source, the readonly state, exactly one layer) plus the guest
+# verify helper per mount; direct machines get the volume-present guest
+# check. Machines that are not running are skipped with a note. The phase
+# writes nothing to the ledger - a run that saw and did nothing writes
+# nothing - and mutates nothing inside the guest, so check mode verifies
+# identically (the guest helper is executed inline, the way a check run
+# stages nothing).
+- name: Read the observed machine states for the verify phase
+  ansible.builtin.include_tasks: _verify_states.yml
+
+- name: Preflight the guest prerequisites the verify phase needs
+  vars:
+    bind_mounts_preflight_machines: |-
+      {{ bind_mounts_scoped_machines
+         | selectattr('name', 'in', bind_mounts_running_machines) | list }}
+    bind_mounts_preflight_tools: [python3, findmnt]
+  ansible.builtin.include_tasks: _guest_preflight.yml
+
+- name: Verify the host bind identity on the running bind machines
+  ansible.builtin.include_tasks: _verify_host.yml
+
+- name: Verify the guest mounts and volumes on the running machines
+  ansible.builtin.include_tasks: _verify_guest.yml
+
+- name: Report the verify results and fail naming every failure
+  ansible.builtin.include_tasks: _verify_report.yml

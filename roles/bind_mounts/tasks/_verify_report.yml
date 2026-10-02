@@ -1,0 +1,40 @@
+---
+# Verify last step: the per-machine verify report and the failure. The phase
+# is read-only - a verify failure fails the run naming the machine, the
+# target, and the failing detail, stating that nothing else was changed.
+# Not-running machines print their skip note.
+- name: Note the not-running machines the verify phase skipped
+  # The loop runs over flat machine-NAME strings (the gate's key list), so
+  # the message dereferences the loop var bare - never an attribute of it.
+  ansible.builtin.debug:
+    msg: "verify skipped: machine {{ bind_mounts_verify_m }} is not running"
+  loop: "{{ bind_mounts_notrunning_machines }}"
+  loop_control:
+    loop_var: bind_mounts_verify_m
+    label: "{{ bind_mounts_verify_m }}"
+  when: bind_mounts_notrunning_machines | length > 0
+
+- name: Render the verify failures as an ACTION REQUIRED box
+  ansible.builtin.fail:
+    msg:
+      - "{{ '=' * 70 }}"
+      - "{{ '%-70s' | format('  Verify failed for the following mounts:') }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('    ' ~ ('machine: ' ~ bind_mounts_failure_row.machine
+             ~ '  target: ' ~ bind_mounts_failure_row.target)) }}"
+      - "{{ '%-70s' | format(      '      ' ~ bind_mounts_failure_row.detail) }}"
+      - "{{ '%-70s' | format('') }}"
+      - "{{ '%-70s' | format('  The verify phase is read-only: nothing was changed.') }}"
+      - "{{ '%-70s' | format('  Re-converge the machine with the mounts phase, then re-run') }}"
+      - "{{ '%-70s' | format(      '  the verify phase.') }}"
+      - "{{ '=' * 70 }}"
+  loop: "{{ (bind_mounts_host_verify_failed | default([]))
+            + (bind_mounts_guest_verify_failed | default([])) }}"
+  loop_control:
+    loop_var: bind_mounts_failure_row
+    label: "{{ bind_mounts_failure_row.machine }}:{{ bind_mounts_failure_row.target }}"
+  # The sum is parenthesized BEFORE the length: a filter binds to its own
+  # operand, so '(a) + (b) | length' would evaluate 'list + int' and throw.
+  when: >-
+    ((bind_mounts_host_verify_failed | default([]))
+    + (bind_mounts_guest_verify_failed | default([]))) | length > 0
