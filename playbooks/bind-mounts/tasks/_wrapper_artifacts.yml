@@ -286,15 +286,12 @@
       - --name
       - "{{ m.name }}"
       - --
-      - install
-      - -m
-      - "0440"
-      - -o
-      - root
-      - -g
-      - root
-      - "{{ sudoers_staging_guest_path }}"
+      - sh
+      - -c
+      - 'rm -f "$1" && install -m 0440 -o root -g root "$2" "$1"'
+      - sh
       - "{{ sudoers_dropin_guest_path }}"
+      - "{{ sudoers_staging_guest_path }}"
   loop: "{{ normalized }}"
   loop_control:
     loop_var: m
@@ -457,13 +454,13 @@
   ansible.builtin.set_fact:
     direct_script_present: >-
       {{ direct_script_probe.results | default([]) | selectattr('rc', 'defined')
-         | selectattr('rc', 'eq', 0) | map(attribute='item.name') | list }}
+         | selectattr('rc', 'eq', 0) | map(attribute='m.name') | list }}
     direct_sudoers_present: >-
       {{ direct_sudoers_probe.results | default([]) | selectattr('rc', 'defined')
-         | selectattr('rc', 'eq', 0) | map(attribute='item.name') | list }}
+         | selectattr('rc', 'eq', 0) | map(attribute='m.name') | list }}
     direct_profile_present: >-
       {{ direct_profile_probe.results | default([]) | selectattr('rc', 'defined')
-         | selectattr('rc', 'eq', 0) | map(attribute='item.name') | list }}
+         | selectattr('rc', 'eq', 0) | map(attribute='m.name') | list }}
   when: ansible_run_tags | intersect(['all', 'install']) | length > 0
   tags: [always]
 
@@ -748,13 +745,13 @@
   ansible.builtin.set_fact:
     teardown_script_present: >-
       {{ teardown_script_probe.results | default([]) | selectattr('rc', 'defined')
-         | selectattr('rc', 'eq', 0) | map(attribute='item.name') | list }}
+         | selectattr('rc', 'eq', 0) | map(attribute='m.name') | list }}
     teardown_sudoers_present: >-
       {{ teardown_sudoers_probe.results | default([]) | selectattr('rc', 'defined')
-         | selectattr('rc', 'eq', 0) | map(attribute='item.name') | list }}
+         | selectattr('rc', 'eq', 0) | map(attribute='m.name') | list }}
     teardown_profile_present: >-
       {{ teardown_profile_probe.results | default([]) | selectattr('rc', 'defined')
-         | selectattr('rc', 'eq', 0) | map(attribute='item.name') | list }}
+         | selectattr('rc', 'eq', 0) | map(attribute='m.name') | list }}
   when: ansible_run_tags | intersect(['teardown']) | length > 0
   tags: [always]
 

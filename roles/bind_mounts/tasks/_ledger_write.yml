@@ -57,8 +57,9 @@
       {%- for bind_mounts_entry in old | dict2items -%}
       {%- if bind_mounts_entry.key in (bind_mounts_write_drop_machines | default([])) -%}
       {%- elif bind_mounts_entry.key in scopes -%}
-      {%- set _ = machines.update({bind_mounts_entry.key:
-            bind_mounts_entry.value | combine(bind_mounts_write_deltas.get(bind_mounts_entry.key, {}))}) -%}
+      {%- set merged = bind_mounts_entry.value | combine(bind_mounts_write_deltas.get(bind_mounts_entry.key, {})) -%}
+      {%- set _ = merged.update({'mode': reg_modes[bind_mounts_entry.key]}) -%}
+      {%- set _ = machines.update({bind_mounts_entry.key: merged}) -%}
       {%- else -%}
       {%- set _ = machines.update({bind_mounts_entry.key: bind_mounts_entry.value}) -%}
       {%- endif -%}

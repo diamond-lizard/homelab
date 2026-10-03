@@ -33,7 +33,7 @@
       {%- if name is not none and (r.rc | default(1) | int == 0) -%}
       {%- set m = bind_mounts_scoped_machines | selectattr('name', 'eq', name) | first -%}
       {%- if m.mode == 'bind' -%}
-      {%- set fields = {'share_volume': true, 'volumes': []} -%}
+      {%- set fields = {'share_volume': true, 'volumes': [{'src': m.share_root | realpath, 'target': m.share_target, 'ro': false}]} -%}
       {%- else -%}
       {%- set volumes = [] -%}
       {%- for mnt in m.mounts -%}

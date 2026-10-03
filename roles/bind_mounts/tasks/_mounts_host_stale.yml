@@ -75,8 +75,13 @@
     bind_mounts_write_deltas: >-
       {%- set out = {} -%}
       {%- for bind_mounts_cleaned_machine in bind_mounts_stale_cleaned -%}
-      {%- set _ = out.update({bind_mounts_cleaned_machine: {'host_binds':
-            (bind_mounts_host_payload | default({})).get(bind_mounts_cleaned_machine, [])}}) -%}
+      {%- set bind_mounts_cleaned_targets = bind_mounts_stale_host
+            | selectattr('machine', 'eq', bind_mounts_cleaned_machine)
+            | map(attribute='target') | list -%}
+      {%- set bind_mounts_kept = (bind_mounts_host_payload | default({}))
+            .get(bind_mounts_cleaned_machine, [])
+            | rejectattr('target', 'in', bind_mounts_cleaned_targets) | list -%}
+      {%- set _ = out.update({bind_mounts_cleaned_machine: {'host_binds': bind_mounts_kept}}) -%}
       {%- endfor -%}
       {{ out }}
   ansible.builtin.include_tasks: _ledger_write.yml

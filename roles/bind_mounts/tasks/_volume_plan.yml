@@ -23,12 +23,13 @@
       {%- endif -%}
       {%- set desired_targets = desired | map(attribute='target') | list -%}
       {%- set managed = [] -%}
-      {%- if entry.get('share_volume', false) -%}
-      {%- set _ = managed.append({'src': m.share_root | realpath, 'target': m.share_target}) -%}
-      {%- endif -%}
       {%- for v in entry.get('volumes', []) -%}
       {%- set _ = managed.append({'src': v.src, 'target': v.target}) -%}
       {%- endfor -%}
+      {%- if entry.get('share_volume', false) and m.mode == 'bind'
+             and (entry.get('volumes', []) | length) == 0 -%}
+      {%- set _ = managed.append({'src': m.share_root | realpath, 'target': m.share_target}) -%}
+      {%- endif -%}
       {%- set managed_resolved = [] -%}
       {%- for e in managed -%}
       {%- set _ = managed_resolved.append({'src': e.src | realpath, 'target': e.target}) -%}
@@ -67,7 +68,12 @@
       {%- if ov.target in desired_targets + stale_targets -%}{%- else -%}
       {%- set proven = (managed_resolved | selectattr('src', 'eq', ov.src | realpath)
                          | selectattr('target', 'eq', ov.target) | list | length) > 0 -%}
-      {%- if not proven -%}
+      {%- set force_ok = bind_mounts_force_remount | bool
+            and (bind_mounts_force_allow_prefixes | select('in', ov.src) | list | length) > 0 -%}
+      {%- if force_ok and not proven -%}
+      {%- set _ = removes.append('--remove-volume=' ~ ov.src ~ ':' ~ ov.target) -%}
+      {%- endif -%}
+      {%- if not proven and not force_ok -%}
       {%- set _ = unproven.append({'machine': m.name, 'target': ov.target,
             'observed': ov.src, 'configured': none,
             'ledger': 'no volume recorded at this target'}) -%}
