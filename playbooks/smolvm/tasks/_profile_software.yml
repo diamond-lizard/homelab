@@ -1,0 +1,67 @@
+---
+# Guest package installation: one pacman call per running machine,
+# installing the configured alphabetical package list with --needed, so
+# a re-run installs only what is missing. In the default run this
+# segment executes after the mounts phase (the ordering contract:
+# volumes - start - mounts - software - verify). Guests must be
+# running: a machine that is not running is skipped with a note, since
+# packages install into the booted guest. The exec user is root by the
+# guest contract, so no privilege escalation is involved here.
+- name: Refresh the machine inventory for the software segment
+  ansible.builtin.command: smolvm machine ls --verbose
+  register: software_ls
+  changed_when: false
+  check_mode: false
+  when:
+    - profile_packages | length > 0
+    - ansible_run_tags | intersect(['all', 'software']) | length > 0
+  tags: [always]
+
+- name: Parse the machine inventory for the software segment
+  ansible.builtin.set_fact:
+    software_sections: "{{ software_ls.stdout | smolvm_ls_sections }}"
+  when:
+    - profile_packages | length > 0
+    - ansible_run_tags | intersect(['all', 'software']) | length > 0
+  tags: [always]
+
+- name: Install the configured packages on running machines
+  ansible.builtin.command:
+    argv: "{{ ['smolvm', 'machine', 'exec', '--name', m.name, '--', 'pacman', '-Sy', '--needed', '--noconfirm'] + profile_packages }}"
+  loop: "{{ config_machines }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: profile_pacman
+  changed_when: "' there is nothing to do' not in profile_pacman.stdout"
+  failed_when: profile_pacman.rc != 0
+  when:
+    - ansible_run_tags | intersect(['all', 'software']) | length > 0
+    - profile_packages | length > 0
+    - software_sections[m.name].state == 'running'
+    - not ansible_check_mode
+  tags: [always]
+
+- name: Note machines skipped by the software segment
+  ansible.builtin.debug:
+    msg: >-
+      Software skipped for {{ m.name }}: the machine is not running
+      (state: {{ software_sections[m.name].state }}). Packages install
+      into the booted guest; start it and re-run with --tags software.
+  loop: "{{ config_machines }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  when:
+    - ansible_run_tags | intersect(['all', 'software']) | length > 0
+    - profile_packages | length > 0
+    - software_sections[m.name].state != 'running'
+  tags: [always]
+
+- name: Note an empty package list
+  ansible.builtin.debug:
+    msg: "packages is empty in the profile config; no guest software to install."
+  when:
+    - ansible_run_tags | intersect(['all', 'software']) | length > 0
+    - profile_packages | length == 0
+  tags: [always]

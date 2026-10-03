@@ -1,0 +1,173 @@
+---
+# Operator config to role registry. The config loads into the private
+# dict `config` (the include_vars precedence trap is handled exactly
+# here, once) and is translated into the per-machine registry the
+# bind_mounts role consumes: the global mode and share fields are
+# copied into every machine entry; direct-mode machines get no share
+# fields. Deep validation (mount paths, source directories, machine
+# states, the volume budget) belongs to the role prelude and runs with
+# every role invocation; this file validates only the config shape the
+# play itself needs on every selection, including selections that never
+# invoke the role (start, stop).
+- name: Check that the profile config exists
+  ansible.builtin.stat:
+    path: "{{ profile_config_path }}"
+  register: profile_config_stat
+  tags: [always]
+
+- name: Require the profile config
+  ansible.builtin.fail:
+    msg: >-
+      The profile config was not found at {{ profile_config_path }}.
+      Create the directory, write vars.yml there (the shape is documented
+      in the header of playbooks/smolvm/profile.yml), then re-run.
+  when: not profile_config_stat.stat.exists
+  tags: [always]
+
+- name: Load the operator config into a private dict
+  ansible.builtin.include_vars:
+    file: "{{ profile_config_path }}"
+    name: config
+  tags: [always]
+
+- name: Assert top-level config validity
+  ansible.builtin.assert:
+    that:
+      - config.mode is defined
+      - config.mode in ['bind', 'direct']
+      - config.machines is defined
+      - config.machines | length > 0
+      - config.share_root is defined
+      - config.share_root is match('/')
+      - config.share_root is not search('\\s')
+      - config.share_target is defined
+      - config.share_target is match('/')
+      - config.share_target is not search('\\s')
+    msg: >-
+      Invalid configuration: mode must be 'bind' or 'direct', machines
+      must be a non-empty list, and share_root / share_target must be
+      absolute paths without whitespace.
+  tags: [always]
+
+- name: Assert the guest package list is alphabetical and unique
+  vars:
+    profile_packages_calc: "{{ config.packages | default([], true) }}"
+  ansible.builtin.assert:
+    that:
+      - profile_packages_calc is sequence
+      - profile_packages_calc is not string
+      - profile_packages_calc == (profile_packages_calc | sort)
+      - profile_packages_calc | length == (profile_packages_calc | unique | list | length)
+    msg: >-
+      packages must be a list of package names in alphabetical order
+      without duplicates: it is installed with one pacman call per
+      machine, in that order. An empty list disables the software
+      segment.
+  tags: [always]
+
+- name: Expose the package list to the software segment
+  ansible.builtin.set_fact:
+    profile_packages: "{{ config.packages | default([], true) }}"
+  tags: [always]
+
+- name: Assert reserved create specs are well-formed
+  vars:
+    create_machines: "{{ config.machines | selectattr('create', 'defined') | list }}"
+  ansible.builtin.assert:
+    that:
+      - m.create.image is string
+      - m.create.image | length > 0
+      - m.create.cpus is number
+      - m.create.cpus | int == m.create.cpus
+      - m.create.cpus >= 1
+      - m.create.mem_mib is number
+      - m.create.mem_mib | int == m.create.mem_mib
+      - m.create.mem_mib >= 64
+    msg: >-
+      Machine {{ m.name }}: create is reserved for future provisioning
+      support (validated, not yet acted on); its shape is
+      {image: <registry reference>, cpus: <int>, mem_mib: <int>}.
+  loop: "{{ create_machines }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  tags: [always]
+
+- name: Normalize limit_machines
+  ansible.builtin.set_fact:
+    limit_parts: "{{ limit_machines | default('') | string | split(',') | map('trim') | reject('equalto', '') | list }}"
+  tags: [always]
+
+- name: Fail when limit_machines names an unknown machine
+  ansible.builtin.assert:
+    that:
+      - limit_parts | difference(config.machines | map(attribute='name') | list) | length == 0
+    msg: >-
+      limit_machines contains a machine name that is not in the profile
+      config. Configured machines:
+      {{ config.machines | map(attribute='name') | list | join(', ') }}.
+  tags: [always]
+
+- name: Apply machine scoping (limit_machines)
+  ansible.builtin.set_fact:
+    config_machines: >-
+      {{ config.machines
+         | selectattr('name', 'in', limit_parts)
+         | list if limit_parts | length > 0
+         else config.machines }}
+  tags: [always]
+
+- name: Assert machine names are unique
+  ansible.builtin.assert:
+    that:
+      - config_machines | map(attribute='name') | list | length ==
+        (config_machines | map(attribute='name') | unique | list | length)
+    msg: "Machine names in the profile config must be unique."
+  tags: [always]
+
+- name: Resolve the share root to its canonical host path
+  ansible.builtin.set_fact:
+    share_root_resolved: "{{ config.share_root | realpath }}"
+  tags: [always]
+
+- name: Build the per-machine role registry
+  ansible.builtin.set_fact:
+    registry: >-
+      {%- set out = [] -%}
+      {%- for m in config_machines -%}
+      {%- set entry = {
+            'name': m.name,
+            'user': m.user,
+            'uid': m.uid,
+            'gid': m.gid,
+            'mode': config.mode,
+            'profile_path': m.profile_path | default('/home/' ~ m.user ~ '/.bash_profile'),
+            'max_volumes': m.max_volumes | default(4)} -%}
+      {%- if config.mode == 'bind' -%}
+      {%- set _ = entry.update({'share_root': share_root_resolved,
+                                'share_target': config.share_target}) -%}
+      {%- endif -%}
+      {%- set mnts = [] -%}
+      {%- for mnt in m.mounts | default([]) -%}
+      {%- set mnt_entry = {
+            'src': mnt.src,
+            'target': mnt.target,
+            'name': mnt.name | default(mnt.src | basename),
+            'readonly': mnt.readonly | default(false) | bool} -%}
+      {%- if mnt.uid is defined -%}{%- set _ = mnt_entry.update({'uid': mnt.uid}) -%}{%- endif -%}
+      {%- if mnt.gid is defined -%}{%- set _ = mnt_entry.update({'gid': mnt.gid}) -%}{%- endif -%}
+      {%- set _ = mnts.append(mnt_entry) -%}
+      {%- endfor -%}
+      {%- set _ = entry.update({'mounts': mnts}) -%}
+      {%- set _ = out.append(entry) -%}
+      {%- endfor -%}
+      {{ out }}
+  tags: [always]
+
+- name: Expose the role variable pass-through
+  ansible.builtin.set_fact:
+    bind_mounts_machines: "{{ registry }}"
+    bind_mounts_limit_machines: "{{ limit_parts }}"
+    bind_mounts_force_remount: "{{ bind_mounts_force_remount | default(false) | bool }}"
+    bind_mounts_force_allow_prefixes: "{{ bind_mounts_force_allow_prefixes | default([], true) }}"
+  tags: [always]

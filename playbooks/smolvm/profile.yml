@@ -1,0 +1,118 @@
+---
+# smolvm machine profile: the thin play that maps this host to its
+# machines and converges them through the bind_mounts capability role
+# (roles/bind_mounts/). The play owns the machine lifecycle (start,
+# stop, exec wait) and guest package installation; the role owns
+# volumes, host and guest binds, verification, and the provenance
+# ledger. The play never writes the ledger: the role is its only
+# writer.
+#
+# Configuration lives outside the repository, in the invoking user's
+# home: ~/.config/homelab/playbooks/smolvm/vars.yml. Shape (every path
+# and name fictitious):
+#
+#   mode: bind                       # or direct
+#   share_root: /home/you/share
+#   share_target: /mnt/share
+#   packages:                        # guest packages, alphabetical
+#     - ansible
+#     - github-cli
+#     - less
+#   machines:
+#     - name: my-vm
+#       user: you
+#       uid: 1000
+#       gid: 1000
+#       mounts:
+#         - src: /home/you/projects/website
+#           target: /home/you/projects/website
+#       # reserved, not yet implemented by this play:
+#       # create: {image: archlinux, cpus: 2, mem_mib: 2048}
+#
+# Run from the repository root on the smolvm host:
+#   ansible-playbook playbooks/smolvm/profile.yml -i inventory -K                (default run)
+#   ansible-playbook playbooks/smolvm/profile.yml -i inventory --tags start -K   (boot + exec wait)
+#   ansible-playbook playbooks/smolvm/profile.yml -i inventory --tags stop -K    (sync + stop)
+#   ansible-playbook playbooks/smolvm/profile.yml -i inventory --tags verify -K  (read-only check)
+#   ... likewise --tags attach, --tags mounts, --tags teardown, --tags software
+# Default run: volume convergence (attach), start + exec wait, host and
+# guest binds (mounts), guest packages (software), verify - the ordering
+# contract: volumes - start - mounts - software - verify (machine
+# creation will slot in before volumes once implemented). Add
+# -e limit_machines=name1[,name2...] to scope any run to those machines.
+# Machines are never created or deleted by this play: a configured name
+# that smolvm does not know fails the run.
+- name: Manage the smolvm machine profile
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  any_errors_fatal: true
+  vars:
+    # lookup('env', 'HOME') follows the invoking shell even when a task
+    # uses become; never spell a home path as ~/... where become would
+    # expand it to root's home.
+    profile_config_path: "{{ lookup('env', 'HOME') }}/.config/homelab/playbooks/smolvm/vars.yml"
+    bind_mounts_state_dir: "{{ lookup('env', 'HOME') }}/.local/state/bind-mount-on-host-and-guest"
+  tasks:
+    # Config load, validation, and translation into the role registry.
+    # Runs on every selection. The include_vars precedence trap is
+    # handled exactly once, here: the config loads into the private dict
+    # `config`, which never becomes a role variable.
+    - name: Registry plumbing (operator config to role registry)
+      ansible.builtin.include_tasks: tasks/_profile_registry.yml
+      tags: [always]
+
+    # TAG MECHANISM (pinned against the include_role docs): tags on a
+    # dynamic include_role do NOT propagate into the role's tasks; the
+    # `apply` parameter is required for that. Every include carries
+    # [always] and the when-gates are the only selection mechanism; the
+    # role itself ignores tags entirely.
+    - name: Attach phase via the bind_mounts role (volume convergence)
+      ansible.builtin.include_role:
+        name: bind_mounts
+        apply:
+          tags: [always]
+      vars:
+        bind_mounts_phase: attach
+      when: ansible_run_tags | intersect(['all', 'attach']) | length > 0
+      tags: [always]
+
+    - name: Lifecycle segment (start + exec wait, or sync + stop)
+      ansible.builtin.include_tasks: tasks/_profile_lifecycle.yml
+      when: ansible_run_tags | intersect(['all', 'start', 'stop']) | length > 0
+      tags: [always]
+
+    - name: Mounts phase via the bind_mounts role (host and guest binds)
+      ansible.builtin.include_role:
+        name: bind_mounts
+        apply:
+          tags: [always]
+      vars:
+        bind_mounts_phase: mounts
+      when: ansible_run_tags | intersect(['all', 'mounts']) | length > 0
+      tags: [always]
+
+    - name: Guest software installation
+      ansible.builtin.include_tasks: tasks/_profile_software.yml
+      when: ansible_run_tags | intersect(['all', 'software']) | length > 0
+      tags: [always]
+
+    - name: Verify phase via the bind_mounts role (read-only verification)
+      ansible.builtin.include_role:
+        name: bind_mounts
+        apply:
+          tags: [always]
+      vars:
+        bind_mounts_phase: verify
+      when: ansible_run_tags | intersect(['all', 'verify']) | length > 0
+      tags: [always]
+
+    - name: Teardown phase via the bind_mounts role (host-side teardown)
+      ansible.builtin.include_role:
+        name: bind_mounts
+        apply:
+          tags: [always]
+      vars:
+        bind_mounts_phase: teardown
+      when: ansible_run_tags | intersect(['teardown']) | length > 0
+      tags: [always]

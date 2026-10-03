@@ -1,0 +1,126 @@
+---
+# Lifecycle segment: start + exec wait (default run and --tags start)
+# and sync + stop (--tags stop). All decisions read one fresh
+# `smolvm machine ls --verbose` parse taken inside this segment, gated
+# against the shared machine-state vocabulary filter. Machines are
+# never created here: a configured name smolvm does not know fails the
+# run. A bare --tags start does not pre-check pending volume changes;
+# the next default run refuses with the ACTION REQUIRED box if a
+# running machine then has a pending change.
+- name: Collect a fresh machine inventory for the lifecycle decisions
+  ansible.builtin.command: smolvm machine ls --verbose
+  register: profile_ls
+  changed_when: false
+  check_mode: false
+  when: ansible_run_tags | intersect(['all', 'start', 'stop']) | length > 0
+  tags: [always]
+
+- name: Parse the fresh machine inventory
+  ansible.builtin.set_fact:
+    profile_sections: "{{ profile_ls.stdout | smolvm_ls_sections }}"
+  when: ansible_run_tags | intersect(['all', 'start', 'stop']) | length > 0
+  tags: [always]
+
+- name: Gate the fresh parse against the machine-state vocabulary
+  ansible.builtin.set_fact:
+    profile_state_gate: >-
+      {{ profile_sections | smolvm_state_gate(config_machines | map(attribute='name') | list) }}
+  when: ansible_run_tags | intersect(['all', 'start', 'stop']) | length > 0
+  tags: [always]
+
+- name: Refuse a machine state outside the frozen vocabulary
+  ansible.builtin.fail:
+    msg: >-
+      smolvm reports a state this run does not understand:
+      {{ (profile_state_gate | dict2items
+          | selectattr('value.classification', 'ne', 'running')
+          | rejectattr('value.classification', 'eq', 'not-running')
+          | map(attribute='value.message') | list | join(', ')) }}.
+      Every lifecycle decision reads the machine state; anything outside
+      the frozen vocabulary (running, stopped, created, failed,
+      unreachable, frozen) cannot be decided safely. Bring the machine
+      into a supported state before re-running.
+  when: >-
+    ansible_run_tags | intersect(['all', 'start', 'stop']) | length > 0
+    and (profile_state_gate | dict2items
+         | selectattr('value.classification', 'ne', 'running')
+         | rejectattr('value.classification', 'eq', 'not-running')
+         | list | length) > 0
+  tags: [always]
+
+- name: Fail on configured machines missing from smolvm
+  ansible.builtin.assert:
+    that: m.name in profile_sections
+    msg: >-
+      Machine '{{ m.name }}' was not found in smolvm machine ls output.
+      Check for a typo in the profile config; machines are never created
+      by this play.
+  loop: "{{ config_machines }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  when: ansible_run_tags | intersect(['all', 'start', 'stop']) | length > 0
+  tags: [always]
+
+- name: Start machines that are not running
+  ansible.builtin.command: "smolvm machine start --name {{ m.name }}"
+  loop: "{{ config_machines }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: profile_start
+  changed_when: "'running (PID' in profile_start.stdout"
+  when:
+    - ansible_run_tags | intersect(['all', 'start']) | length > 0
+    - profile_sections[m.name].state != 'running'
+    - not ansible_check_mode
+  tags: [always]
+
+- name: Compute machines started by this run
+  ansible.builtin.set_fact:
+    profile_started: >-
+      {{ profile_start.results | default([])
+         | selectattr('changed', 'defined') | selectattr('changed')
+         | map(attribute='m.name') | list }}
+  when: ansible_run_tags | intersect(['all', 'start']) | length > 0
+  tags: [always]
+
+- name: Wait for started machines to accept exec
+  ansible.builtin.command: "smolvm machine exec --name {{ item }} -- id -u"
+  loop: "{{ profile_started }}"
+  register: profile_exec_probe
+  until: profile_exec_probe.rc == 0
+  retries: 30
+  delay: 2
+  changed_when: false
+  when: ansible_run_tags | intersect(['all', 'start']) | length > 0
+  tags: [always]
+
+- name: Sync guest filesystems before stopping
+  ansible.builtin.command:
+    argv: [smolvm, machine, exec, --name, "{{ m.name }}", --, sync]
+  loop: "{{ config_machines }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  failed_when: false
+  changed_when: false
+  when:
+    - ansible_run_tags | intersect(['stop']) | length > 0
+    - profile_sections[m.name].state == 'running'
+    - not ansible_check_mode
+  tags: [always]
+
+- name: Stop running machines
+  ansible.builtin.command: "smolvm machine stop --name {{ m.name }}"
+  loop: "{{ config_machines }}"
+  loop_control:
+    loop_var: m
+    label: "{{ m.name }}"
+  register: profile_stop
+  changed_when: "'Stopped machine' in profile_stop.stdout"
+  when:
+    - ansible_run_tags | intersect(['stop']) | length > 0
+    - profile_sections[m.name].state == 'running'
+    - not ansible_check_mode
+  tags: [always]
