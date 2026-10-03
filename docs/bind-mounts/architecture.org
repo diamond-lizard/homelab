@@ -4,24 +4,41 @@
 vars.yml on the host is the single source of truth: machines, users, mounts,
 mode, and the volume ceiling. It is untracked; the checked-in example is
 vars.yml.example.
-*** The playbook
-bind-mounts.yml validates the configuration, gathers real state from findmnt
-and smolvm machine ls, plans a volume diff, converges stopped machines on a
-default run or with --tags attach, halts before any mutation when a running
-machine needs volume changes or this selection cannot apply them, applies
-the rest, records each applied volume change in the ledger, verifies the
-result, and rewrites the ledger. Every run
-accepts -e limit_machines=name1[,name2...] to scope it to the named
-machines only; ledger entries of scoped-out machines are carried forward
-unchanged.
+*** The playbook and the role
+bind-mounts.yml is the command-line wrapper: it keeps the documented CLI
+(tags, -e limit_machines, -K), owns the machine lifecycle (start, stop,
+auto-start, exec-wait) and the guest artifact install and removal, and
+delegates the volume, bind, and verify work to the bind_mounts capability
+role (roles/bind_mounts/), invoked once per segment with bind_mounts_phase
+set to attach, mounts, verify, or teardown. The role runs a shared prelude
+(registry validation, one inventory parse through the filter plugin, ledger
+read, volume plan, completeness check, run lock, staging sweep) and is the
+only ledger writer: wrapper-owned tags write no ledger. Every run accepts
+-e limit_machines=name1[,name2...] to scope it to the named machines only;
+ledger entries of scoped-out machines are carried forward unchanged.
+*** The profile play
+playbooks/smolvm/profile.yml is the second entry point and the intended
+sole one after the wrapper retires: it maps the host to its machines and
+converges them through the same bind_mounts role. It owns the machine
+lifecycle (start, stop, exec wait) and guest package installation (one
+pacman call per running machine, from the alphabetical packages list in
+its config); the role keeps volumes, binds, verification, and the ledger.
+Its configuration lives outside the repository, in the invoking user's
+home: ~/.config/homelab/playbooks/smolvm/vars.yml, in the same shape as
+the wrapper's vars.yml plus packages and an optional reserved per-machine
+create spec (image, cpus, mem_mib) for future provisioning. Selections:
+default (volumes, start, mounts, software, verify), plus attach, stop,
+verify, mounts, teardown. The wrapper's retirement is gated on this play;
+until the gate the wrapper CLI stays the documented interface.
 *** The filter plugin
 filter_plugins/smolvm_facts.py parses smolvm machine ls --verbose into
 per-machine state and volume lists. The format was verified against real
-output in both running and stopped states. The playbook reads every start,
-stop, volume and verification decision from those states and understands
-only running and stopped, so the prelude refuses any machine state outside
-that vocabulary (naming the machine and the token) rather than letting the
-running/stopped comparisons fall through to a branch neither of them chose.
+output in both running and stopped states. The role reads every start, stop, volume and verification decision from
+those states. The shared vocabulary gate classifies running as the running
+phase and stopped and created as not-running, refuses failed, unreachable,
+and frozen with the raw token named, and refuses any other alphabetic token
+as unknown; rows the parser had to drop are reported separately, so a
+missing machine is distinguished from an unparseable one.
 *** The share root
 share_root holds one subdirectory per mount; each is bind-mounted from its
 source on the host. Bind mode attaches it to each machine as a volume, so
@@ -115,6 +132,7 @@ format: 1
 mode: bind
 machines:
   my-vm:
+    mode: bind
     share_volume: true
     volumes: []
     host_binds:
@@ -125,10 +143,7 @@ machines:
       - target: /home/you/projects/website
         source: /mnt/share/website
         observed: matched
-    installed:
-      script: true
-      sudoers: true
-      bash_profile_block: true
+        triple: {fstype: virtiofs, source: /mnt/share/website, root: /website}
 #+END_SRC
 *** Volumes at configured targets need ledger proof
 A volume the configuration does not want at a target it names is left
@@ -206,8 +221,12 @@ bind for the lifetime of the VM, so the old bind cannot be unmounted and
 even -e bind_mounts_force_remount=true must wait for a stopped machine.
 A bind the kernel marks //deleted — the source directory was unlinked
 while the bind stayed mounted — is still playbook-owned when the path
-minus that marker matches the configured or ledger-recorded source; it
-remediates like any proven-stale bind, without force.
+minus that marker matches the configured or ledger-recorded source; it remediates like any proven-stale bind, without force. A guest layer is
+umounted only when its live mountinfo triple (filesystem type, source
+string, root subpath) matches the triple recorded at mount time; a replaced
+layer is refused with both triples printed and the manual command named.
+Ledger entries recorded before triples existed are reported, never removed;
+the next run's re-mount re-marks them.
 An unproven bind fails the run with every affected host and guest path
 listed; re-running with -e bind_mounts_force_remount=true forces
 replacement once the machine is stopped. Stacked binds at a share
@@ -245,10 +264,10 @@ the machine stops.
 Guest mount collection and guest binds require running machines. Volume
 changes require stopped machines: the default run converges stopped
 machines by itself and halts with an ACTION REQUIRED message when a
-running machine needs volume changes; the attach tag refuses them. Only the
-default run and --tags attach converge a volume set (teardown removes the
-volumes the ledger records); a partial selection (mounts, install, verify,
-start) refuses a stopped machine whose volume change is pending.
+running machine needs volume changes; the attach tag refuses them. Only the default run and --tags attach converge a volume set (teardown
+removes the volumes the ledger records); of the partial selections, start
+and install refuse a pending volume change, while mounts and verify never
+touch the volume set and do not refuse on one.
 *** Non-root exec user fails the install phase
 *** Missing guest user or home directory fails the install phase
 The install preflight checks that the configured user exists inside the
@@ -264,7 +283,8 @@ before the budget check.
 The host-side probes run, and so do the three verify tasks: the host bind
 identity check and the two guest verifications, each marked check mode
 false. The guest verifications execute the helper's read-only work inline
-through the machine's exec, so a check run stages nothing in a guest and
-the helper lifecycle is untouched. Check mode is a converged-state
+through the machine's exec, so a check run stages nothing in a guest and the helper lifecycle is
+untouched; the run lock, the staging sweep, and every ledger write are
+skipped in check mode. Check mode is a converged-state
 verifier, not a preview of changes: it stops on the same refusals a real
 run raises and does not guest-verify a stopped machine.

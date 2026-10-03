@@ -17,7 +17,7 @@ created. Unusual states are refused, not auto-fixed: a mount whose
 content does not match the configuration, a volume at a target the
 configuration names whose ownership the ledger cannot prove, stack
 layers whose ownership the ledger cannot prove, or a machine state the
-playbook cannot reason about (it knows only running and stopped), halt
+playbook cannot reason about (running and not-running are understood: stopped and created; failed, unreachable, and frozen refuse with the raw state named), halt
 the run with instructions instead of being modified.
 
 Two modes are supported. In bind mode the playbook consolidates every
@@ -26,9 +26,13 @@ share to each machine as a single volume, and inside the guest bind-mounts
 each entry from the share to its real target path, so one volume slot serves
 any number of directories. In direct mode every configured directory becomes
 its own smolvm volume, which is simpler inside the guest but uses one volume
-slot per directory. Switching modes is a one-line configuration change:
-stop the machines, change the mode, and run the playbook once; it converges
-the volume set, restarts the machines, and verifies the result.
+slot per directory. Switching modes is a one-line configuration change: stop the machines,
+change the mode, and run the playbook. Direct to bind converges in one run.
+Bind to direct takes two runs by design: the first converges the volume set,
+starts the machines, and halts with an ACTION REQUIRED message, because the
+bind-era host binds pin while a machine runs; stop the machines again, run
+with --tags mounts to unmount the stale host binds and prune the emptied
+share subdirectories, then run the default playbook to finish and verify.
 
 The mode choice exists because of a smolvm constraint: a directory attached
 directly is its own virtiofs device, and libkrun (the VMM underneath) caps
@@ -92,9 +96,12 @@ Delete the mount entry from vars.yml and run the default playbook. Guest
 target directories are never removed and no data is deleted in either
 mode. Whether the guest can stay running depends on the mode.
 **** Bind mode: the guest can stay running
-The run unmounts everything the ledger proves it created: the host-side
-bind, the emptied share subdirectory, and the guest-side bind, except a
-target that carries a volume, which the guest side never unmounts.
+The guest-side bind is removed while the machine runs, except a target that
+carries a volume, which the guest side never unmounts. The host side cannot
+be: libkrun pins the host bind while the machine runs, so the run halts with
+an ACTION REQUIRED message naming the machine and the stop command; after
+stopping, re-run with --tags mounts to unmount the host bind and prune the
+emptied share subdirectory.
 **** Direct mode: the guest must be stopped; the volume itself is removed
 *** Manage a subset of machines
 Every run accepts -e limit_machines=name1[,name2...] to scope it to the
@@ -192,14 +199,17 @@ Direct mode appends :ro to the volume; bind mode remounts the bind read-only.
 They default to the machine-level uid and gid.
 ** Tag reference
 *** The default run
-Validate, volume convergence for stopped machines, host binds, start,
-install, guest binds, verify. Works whether the guests are running or
+Validate, then volume convergence (attach), start, install, host binds and
+guest binds (mounts), verify. The host binds are mounts-phase work and run
+after the start, not before it. Works whether the guests are running or
 stopped; a running machine that needs volume changes halts the run with an
 ACTION REQUIRED message naming the machine and the command to run.
 *** mounts
-Host binds and guest binds only. Refuses stopped machines, because guest
-binds need a running guest. Does not change the volume set: a pending
-volume change stops the run and names the default run or --tags attach.
+Host binds and guest binds only. Host-side share-tree work applies
+regardless of machine state; the guest binds need a running guest and refuse
+a stopped machine with the start route named; stale-host-bind remediation
+refuses a running machine, so stop first. Does not change the volume set;
+a pending volume change no longer stops this selection.
 *** install
 Preflights the guest user and home directory, then refreshes the guest
 script, the sudoers drop-in, and the profile hook. Needs running machines,
@@ -210,9 +220,11 @@ Does not change the volume set: converge with the default run or --tags
 attach first if a volume change is pending.
 *** verify checks every mount read-only after the run
 Does not change the volume set.
-*** attach converges the volume set; machines must be stopped
-The default run already converges stopped machines automatically, so attach
-is only needed for explicit, step-by-step control. It is also the way to
+*** attach converges the volume set; machines must be not-running
+Stopped and created machines qualify. A running machine is refused per
+machine and only when that machine has a pending volume change. The default
+run already converges not-running machines automatically, so attach is only
+needed for explicit, step-by-step control. It is also the way to
 converge after a partial run (mounts, install, verify, start), which never
 changes the volume set.
 *** stop syncs each guest and stops the machines
@@ -224,8 +236,8 @@ clears them with the guest's tmpfs /tmp.
 
 attach, stop, and teardown are excluded from the default run; select them
 explicitly with --tags. Only the default run and --tags attach converge a
-machine's volume set (teardown removes the volumes the ledger records); the
-partial tags refuse a pending volume change instead of applying it.
+machine's volume set (teardown removes the volumes the ledger records); of the partial tags, start and install refuse a pending volume change,
+while mounts and verify never touch the volume set and do not refuse on one.
 ** Mode switching
 *** 1 Stop the machines
 #+BEGIN_SRC
@@ -254,11 +266,12 @@ attach after stopping, and start the machines with --tags start.
 ** Safety model
 *** The provenance ledger records what each run observes
 The ledger lives in the playbook user's state directory, outside the share,
-and records volumes, host binds, guest binds, and installed artifacts per
-machine. It records those artifacts by kind, not by path, so changed
+and records volumes, host binds, and guest binds per machine, every entry
+carrying its mode. Installed artifacts are not ledger fields: the artifact
+removals probe the guests for the artifacts themselves and act only on the
+paths the current configuration names, so changed
 installed_script_guest_path or sudoers_dropin_guest_path values leave a copy
-at the old path behind and untracked; the removals act only on the paths the
-current configuration names. The guest helper copies are not in the ledger at
+at the old path behind and untracked. The guest helper copies are not in the ledger at
 all: they are staged under the configured helper directory and removed by the
 run that
 used them, and such a removal touches a file only when it carries the
@@ -321,7 +334,8 @@ so a reader never sees a partial file. The profile helper preserves the
 file owner and mode and never touches lines outside the managed block,
 which uses the standard blockinfile markers.
 *** Check mode skips every mutating task and still verifies
-No volume change, mount, install, or stale-state removal runs. The
+No volume change, mount, install, stale-state removal, run lock, staging
+sweep, or ledger write runs. The
 read-only checks do: the host-side probes, the host bind identity check,
 and both guest verifications. The guest checks run the same read-only
 work the mount phase stages, but inline through the machine's exec, so a
@@ -397,8 +411,12 @@ while the machine is stopped; a running machine halts the run with an
 ACTION REQUIRED message first (libkrun pins the old bind). A bind whose
 source directory was deleted while it stayed mounted — the kernel marks
 its mount root //deleted — is treated as ours when the path minus that
-marker matches the configured or recorded source, and remediates on a
-stopped machine without force. When the ledger
+marker matches the configured or recorded source, and remediates on a stopped machine without force. Guest binds carry an
+extra proof: a guest layer is umounted only when its live mountinfo triple
+(filesystem type, source, root subpath) matches the triple recorded at mount
+time; a replaced layer is refused with both triples printed, and ledger
+entries recorded before triples existed are reported, never removed, and
+are re-marked by the next run's re-mount. When the ledger
 cannot prove the bind is ours, the run halts and lists every affected host
 and guest path; re-run with -e bind_mounts_force_remount=true to accept, or
 unmount manually. A volume the configuration does not want at a target it

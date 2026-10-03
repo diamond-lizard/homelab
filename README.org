@@ -11,7 +11,7 @@ documents the vocabulary.
 - playbooks/ -- the profile plays, one directory per component
 - filter_plugins/ -- repository-wide filter plugins
 - docs/ -- per-component architecture notes
-- roles/ -- capability roles (empty until the first role conversion)
+- roles/ -- capability roles (bind_mounts: smolvm host/guest share binds)
 - CONTEXT.md -- the project vocabulary
 
 * Running
@@ -25,3 +25,8 @@ filter plugins.
 The bind-mounts playbook lives under playbooks/bind-mounts/. Its manual is
 playbooks/bind-mounts/README.org and its architecture notes are
 docs/bind-mounts/architecture.org.
+
+The smolvm machine profile play lives at playbooks/smolvm/ (machine
+lifecycle, guest packages, and bind-mount convergence through the
+bind_mounts role). Its configuration lives outside the repository, in the
+invoking user's home: ~/.config/homelab/playbooks/smolvm/vars.yml.
