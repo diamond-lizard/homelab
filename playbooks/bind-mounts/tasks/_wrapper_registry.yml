@@ -1,15 +1,15 @@
 ---
 # TRANSITION REGISTRY PLUMBING (wrapper-owned; deleted at the retirement
-# gate, TASK-11000). The include_vars precedence trap (REQ-0500) is
+# gate). The include_vars precedence trap is
 # handled exactly once, here: vars.yml loads into the private dict
 # `config`, which never becomes a role variable, and is translated into
-# the per-machine role registry per reference table C - the legacy global
+# the per-machine role registry per the machine registry shape - the legacy global
 # mode and share fields are copied into every machine entry; direct-mode
 # machines get no share fields. The wrapper performs no ledger writes
-# anywhere (REQ-0200): the ledger, the host mount table, the smolvm
+# anywhere: the ledger, the host mount table, the smolvm
 # inventory, and the machine-state vocabulary gate are read-only here.
 # The legacy validation messages and the share-tree placeholder creation
-# (always-tagged, as today; see the drift register) stay verbatim.
+# (always-tagged, as today) stay verbatim.
 - name: Check that vars.yml exists
   ansible.builtin.stat:
     path: "{{ playbook_dir }}/vars.yml"
@@ -115,7 +115,7 @@
 - name: Build the normalized machine and mount list
   ansible.builtin.set_fact:
     # Legacy-shaped normalized list (the wrapper's own loops keep today's
-    # shapes) plus the per-machine role registry per reference table C:
+    # shapes) plus the per-machine role registry per the machine registry shape:
     # mode/share_root/share_target are copied from the legacy global config
     # into every machine entry; direct-mode machines get no share fields.
     normalized: >-

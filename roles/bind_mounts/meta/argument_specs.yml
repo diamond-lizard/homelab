@@ -1,5 +1,5 @@
 ---
-# Role interface validation, per reference table C (machine registry shape).
+# Role interface validation: the machine registry shape.
 # Cross-field rules (bind-mode requires share fields; direct-mode share fields
 # warn) live in the prelude, not here: required_iff does not exist.
 argument_specs:

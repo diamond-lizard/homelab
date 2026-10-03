@@ -2,7 +2,7 @@
 # TRANSITION, wrapper-owned (files deleted at the retirement gate). The
 # artifact machinery: install (`--tags install` and the default run, the
 # legacy order after start) and removals. Behavior stays exactly as today
-# per reference table B, except the drift-register row F: the removals
+# except one recorded change: the removals
 # key on ARTIFACT PRESENCE PROBES instead of the ledger `installed`
 # field, which the role deletes on migration and never writes. Probes
 # (read-only, safe in check mode) fire only on running machines, which is
@@ -10,7 +10,7 @@
 # refusal boxes keep the legacy `installed`-keyed trigger and stay silent
 # for migrated entries (whose ledger no longer carries the field). The
 # legacy host and guest temp-name sweeps stay. The wrapper performs no
-# ledger writes anywhere (REQ-0200).
+# ledger writes anywhere.
 
 # ---- install segment (default run and --tags install) ----
 - name: Fail when install is requested on a stopped machine
@@ -305,8 +305,8 @@
   tags: [always]
 
 # ---- removals (direct mode via --tags install; teardown sees these from
-# the dispatcher AFTER the role's teardown invocation; drift register row
-# F: the removals and their probes key on artifact presence, running
+# the dispatcher AFTER the role's teardown invocation; the removals and
+# their probes key on artifact presence, running
 # machines only, exactly where removals were possible before) ----
 
 - name: Collect stopped machines that still carry bind-mode artifacts
@@ -367,7 +367,7 @@
   tags: [always]
 
 # Presence probes for the three artifacts on the running direct-mode
-# machines (drift register row F): read-only, so they are safe in check
+# machines): read-only, so they are safe in check
 # mode and run nowhere else.
 - name: Probe the installed guest script (direct mode)
   ansible.builtin.command:

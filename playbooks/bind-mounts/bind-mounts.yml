@@ -16,7 +16,7 @@
 # table B), replicating the legacy per-tag selections; the role is
 # invoked per segment through include_role with `bind_mounts_phase` set
 # (the role's only interface; the role ignores tags entirely). The
-# wrapper performs no ledger writes anywhere (REQ-0200): the provenance
+# wrapper performs no ledger writes anywhere: the provenance
 # ledger is the role's writer field from conversion onward. The play-level
 # vars (legacy artifact paths and the state dir) stay exactly as they were
 # so `-e` overrides keep working.
@@ -50,7 +50,7 @@
       tags: [always]
 
     # Volume convergence: role attach invocation (default run and
-    # --tags attach). Per the drift register, an attach selection no longer
+    # --tags attach). An attach selection no longer
     # refuses when any machine is running; it refuses per machine and only
     # when that machine has a pending volume change - inside the role.
     # TAG MECHANISM (pinned, ansible-core 2.20): tags on a dynamic
@@ -59,7 +59,7 @@
     # attributes row 'tags' and the 'apply' parameter) require apply: for
     # that. The wrapper therefore applies [always] at the include site: the
     # CLI-to-phase tag translation stays wrapper-owned (the when-gates are
-    # the only selection mechanism, per reference table B) and the role
+    # the only selection mechanism) and the role
     # remains tag-free - its no-tags decision is untouched.
     - name: Attach phase via the capability role (volumes)
       ansible.builtin.include_role:
@@ -88,7 +88,7 @@
 
     # Host + guest binds: role mounts invocation (default run and
     # --tags mounts). The host binds ride inside this post-start
-    # invocation (drift register: only the host-bind work moved).
+    # invocation (only the host-bind work moved).
     - name: Mounts phase via the capability role (host and guest binds)
       ansible.builtin.include_role:
         name: bind_mounts
@@ -112,7 +112,7 @@
 
     # Teardown: role teardown invocation first (host binds, subdirs,
     # recorded volumes, ledger prune), then the wrapper's artifact
-    # removals, presence-probed (reference table B; drift register row F).
+    # removals, presence-probed (they key on the artifacts themselves).
     - name: Teardown phase via the capability role (host-side teardown)
       ansible.builtin.include_role:
         name: bind_mounts

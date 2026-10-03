@@ -9,8 +9,8 @@
 # parse taken inside this segment - never from the role invocation's
 # registers or a pre-parse from the registry plumbing - plus a read-only
 # ledger read for the provenance logic. The wrapper writes nothing to the
-# ledger (REQ-0200). The duplication of the volume-plan logic is the
-# deliberate transition footprint (reference table F), deleted at the
+# ledger. The duplication of the volume-plan logic is the
+# deliberate transition footprint, deleted at the
 # gate.
 - name: Collect a fresh machine inventory for the lifecycle decisions
   ansible.builtin.command: smolvm machine ls --verbose
