@@ -141,18 +141,24 @@
           }}) -%}
       {%- endfor -%}
       {{ result }}
+  # check mode: the plan must still be computed - the pending-change refusals
+  # are read-only verdicts and check mode is a converged-state verifier; the
+  # inputs (lifecycle probe, registry, ledger) all carry check_mode: false
+  # themselves. A `not ansible_check_mode` clause here left volume_plans
+  # undefined for the default-selection consumers and crashed the check run
+  # with 'volume_plans' is undefined (pinned 2026-10-03, 14:14 run).
   when:
     - ansible_run_tags | intersect(['all', 'start', 'install']) | length > 0
-    - not ansible_check_mode
   tags: [always]
 
 - name: Collect volumes at configured targets the ledger cannot prove
   ansible.builtin.set_fact:
     volume_plan_foreign: >-
       {{ volume_plans | dict2items | map(attribute='value.foreign') | flatten | list }}
+  # no check-mode exclusion: the foreign-volume refusal is a read-only verdict
+  # and must render in check mode (converged-state verifier contract)
   when:
     - ansible_run_tags | intersect(['all', 'start', 'install']) | length > 0
-    - not ansible_check_mode
   tags: [always]
 
 - name: >-
@@ -275,9 +281,10 @@
 - name: Stop because this selection cannot converge pending volume changes
   ansible.builtin.fail:
     msg: "ACTION REQUIRED: volume changes are pending and --tags {{ ansible_run_tags | join(',') }} does not apply them; see the box above."
+  # no check-mode exclusion: refusals render in check mode (converged-state
+  # verifier contract); only genuinely mutating tasks are excluded
   when:
     - volume_changes_partial | default([]) | length > 0
-    - not ansible_check_mode
   tags: [always]
 
 - name: Start machines that are stopped
