@@ -13,16 +13,16 @@
   changed_when: false
   check_mode: false
   when:
-    - profile_packages | length > 0
     - ansible_run_tags | intersect(['all', 'software']) | length > 0
+    - profile_packages | length > 0
   tags: [always]
 
 - name: Parse the machine inventory for the software segment
   ansible.builtin.set_fact:
     software_sections: "{{ software_ls.stdout | smolvm_ls_sections }}"
   when:
-    - profile_packages | length > 0
     - ansible_run_tags | intersect(['all', 'software']) | length > 0
+    - profile_packages | length > 0
   tags: [always]
 
 - name: Install the configured packages on running machines

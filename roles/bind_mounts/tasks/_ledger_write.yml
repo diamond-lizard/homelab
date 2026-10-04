@@ -83,7 +83,7 @@
 - name: Render the merged ledger to the temp file
   ansible.builtin.copy:
     content: |
-      # Managed by bind-mounts.yml (ansible). DO NOT EDIT; overwritten on re-run.
+      # Managed by the bind_mounts capability role. DO NOT EDIT; overwritten on re-run.
       #
       {{ bind_mounts_ledger | to_nice_yaml(indent=2) }}
     dest: "{{ bind_mounts_state_dir }}/{{ bind_mounts_ledger_file }}.tmp"

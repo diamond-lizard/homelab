@@ -15,7 +15,7 @@
       - "{{ '%-70s' | format('  Guest binds need a running machine; nothing was mounted') }}"
       - "{{ '%-70s' | format('  for them. Start the machines, then re-run:') }}"
       - "{{ '%-70s' | format('') }}"
-      - "{{ '%-70s' | format('  ansible-playbook playbooks/bind-mounts/bind-mounts.yml --tags start -K') }}"
+      - "{{ '%-70s' | format('  ansible-playbook playbooks/smolvm/profile.yml --tags start -K') }}"
       - "{{ '%-70s' | format('') }}"
       - "{{ '=' * 70 }}"
   when: bind_mounts_stopped_with_binds | length > 0
