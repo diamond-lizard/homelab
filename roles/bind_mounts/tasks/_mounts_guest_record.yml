@@ -3,6 +3,21 @@
 # configured target; a foreign mount the ledger cannot prove) and the guest
 # lane at the observation site, with the helper's TRIPLE lines recorded so a
 # legacy entry at a still-configured target is re-marked by this re-mount.
+- name: ACTION REQUIRED - guest share director(y/ies) empty (host-side bind missing)
+  ansible.builtin.fail:
+    msg:
+      - "{{ '=' * 70 }}"
+      - "{{ '%-70s' | format('  Guest share director(y/ies) are empty - the host-side bind') }}"
+      - "{{ '%-70s' | format('  feeding them is missing or points at an empty directory:') }}"
+      - "{{ '%-70s' | format('    ' ~ (bind_mounts_guest_refused.empty_share | map(attribute='machine') | join(', '))) }}"
+      - "{{ '%-70s' | format('  For each machine above, the helper refused to bind an empty') }}"
+      - "{{ '%-70s' | format('  share directory. Remedy: converge the host-side binds (re-run') }}"
+      - "{{ '%-70s' | format('  the mounts phase; stop the machine first if a stale bind is') }}"
+      - "{{ '%-70s' | format('  involved), then re-run this selection.') }}"
+      - "{{ '%-70s' | format('  Nothing else was changed by this run.') }}"
+      - "{{ '=' * 70 }}"
+  when: bind_mounts_guest_refused.empty_share | length > 0
+
 - name: ACTION REQUIRED - guest bind target(s) carrying a machine volume
   ansible.builtin.fail:
     msg:

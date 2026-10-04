@@ -36,7 +36,7 @@
 - name: Classify the guest binds the helper refused
   ansible.builtin.set_fact:
     bind_mounts_guest_refused: >-
-      {%- set out = {'volume': [], 'unproven': [], 'proven': []} -%}
+      {%- set out = {'volume': [], 'unproven': [], 'proven': [], 'empty_share': []} -%}
       {%- for r in (bind_mounts_guest_mount.results | default([])) -%}
       {%- if r.rc is defined and r.rc == 3 -%}
       {%- set vols = bind_mounts_sections.get(r.bind_mounts_ensure_item.machine, {}).mounts | default([]) -%}
@@ -50,6 +50,12 @@
       {%- else -%}
       {%- set _ = out['proven'].append(r.item) -%}
       {%- endif -%}
+      {%- endif -%}
+      {%- if r.rc is defined and r.rc == 4 -%}
+      {%- set _ = out['empty_share'].append({'machine': r.bind_mounts_ensure_item.machine,
+            'target': r.bind_mounts_ensure_item.target,
+            'share': r.bind_mounts_ensure_item.share_path,
+            'stderr': r.stderr | default('') }) -%}
       {%- endif -%}
       {%- endfor -%}
       {{ out }}
