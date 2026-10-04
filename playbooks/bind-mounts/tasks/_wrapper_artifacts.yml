@@ -638,6 +638,20 @@
     - smolvm_sections[m.name].state == 'running'
   tags: [always]
 
+- name: Collect the teardown machines whose artifacts are present
+  ansible.builtin.set_fact:
+    teardown_script_present: >-
+      {{ teardown_script_probe.results | default([]) | selectattr('rc', 'defined')
+         | selectattr('rc', 'eq', 0) | map(attribute='m.name') | list }}
+    teardown_sudoers_present: >-
+      {{ teardown_sudoers_probe.results | default([]) | selectattr('rc', 'defined')
+         | selectattr('rc', 'eq', 0) | map(attribute='m.name') | list }}
+    teardown_profile_present: >-
+      {{ teardown_profile_probe.results | default([]) | selectattr('rc', 'defined')
+         | selectattr('rc', 'eq', 0) | map(attribute='m.name') | list }}
+  when: ansible_run_tags | intersect(['teardown']) | length > 0
+  tags: [always]
+
 - name: Remove the installed guest script (teardown)
   ansible.builtin.command:
     argv:
@@ -741,19 +755,6 @@
     - smolvm_sections[m.name].state == 'running'
   tags: [always]
 
-- name: Collect the teardown machines whose artifacts are present
-  ansible.builtin.set_fact:
-    teardown_script_present: >-
-      {{ teardown_script_probe.results | default([]) | selectattr('rc', 'defined')
-         | selectattr('rc', 'eq', 0) | map(attribute='m.name') | list }}
-    teardown_sudoers_present: >-
-      {{ teardown_sudoers_probe.results | default([]) | selectattr('rc', 'defined')
-         | selectattr('rc', 'eq', 0) | map(attribute='m.name') | list }}
-    teardown_profile_present: >-
-      {{ teardown_profile_probe.results | default([]) | selectattr('rc', 'defined')
-         | selectattr('rc', 'eq', 0) | map(attribute='m.name') | list }}
-  when: ansible_run_tags | intersect(['teardown']) | length > 0
-  tags: [always]
 
 - name: Remove the managed .bash_profile block (teardown)
   ansible.builtin.command:
