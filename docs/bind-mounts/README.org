@@ -1,0 +1,453 @@
+* bind-mounts: share host directories with smolvm guests
+** Overview
+bind-mounts shares host directories with smolvm guests. It is a capability
+role (roles/bind_mounts/) driven by a thin profile play
+(playbooks/smolvm/profile.yml) and one configuration file. The play owns
+the machine lifecycle (start, stop, exec wait) and guest package
+installation; the role owns volumes, host and guest binds, verification,
+and the provenance ledger.
+** Details
+One default run validates the configuration, attaches the configured host
+directories to each machine, starts machines that are not running,
+bind-mounts them at their target paths inside each guest, installs the
+configured guest packages, verifies every mount, and records what it
+observed in a provenance ledger.
+
+The play manages any number of machines and users from the same file, is
+safe to re-run in any state reachable through normal operation, and never
+touches a mount or volume it cannot prove it created. Unusual states are
+refused, not auto-fixed: a mount whose content does not match the
+configuration, a volume at a target the configuration names whose
+ownership the ledger cannot prove, stack layers whose ownership the ledger
+cannot prove, or a machine state outside the known vocabulary halt the run
+with instructions instead of being modified.
+
+Two modes are supported. In bind mode the configuration consolidates every
+configured directory under one share directory (share_root), attaches that
+share to each machine as a single volume, and inside the guest bind-mounts
+each entry from the share to its real target path, so one volume slot
+serves any number of directories. In direct mode every configured
+directory becomes its own smolvm volume, which is simpler inside the guest
+but uses one volume slot per directory. Switching modes: stop the
+machines, change the mode, and run the playbook. Direct to bind converges
+in one run. Bind to direct takes two runs by design: the first converges
+the volume set, starts the machines, and halts with an ACTION REQUIRED
+message, because the bind-era host binds pin while a machine runs; stop
+the machines again, run with --tags mounts to unmount the stale host binds
+and prune the emptied share subdirectories, then run the default playbook
+to finish and verify.
+
+The mode choice exists because of a smolvm constraint: a directory attached
+directly is its own virtiofs device, and libkrun (the VMM underneath) caps
+x86_64 machines at 11 virtio-mmio IRQs, one per device. Balloon, rng,
+console, and two block devices take five; the root filesystem, the volume
+mounts, and the vsock agent channel share the rest, so a directly created
+machine fits at most 4 host volumes (3 for machines created from a packed
+.smolmachine archive), and one fewer when anything else adds a device, such
+as published ports. The ceiling lives in libkrun, and smolvm has no
+preflight for it; see smolvm issue
+[[https://github.com/smol-machines/smolvm/issues/941][#941]].
+bind mode makes the ceiling irrelevant to the number of shared directories;
+direct mode is subject to it.
+** Quick start
+*** 1 Write the configuration
+The play reads its config from the invoking user's home:
+~/.config/homelab/playbooks/smolvm/vars.yml. Create the directory and file
+(the full shape is documented in the header of
+playbooks/smolvm/profile.yml):
+
+#+BEGIN_SRC yaml
+mode: bind
+share_root: /home/you/share
+share_target: /mnt/share
+packages:
+  - ansible
+  - github-cli
+machines:
+  - name: my-vm
+    user: you
+    uid: 1000
+    gid: 1000
+    mounts:
+      - src: /home/you/projects/website
+        target: /home/you/projects/website
+#+END_SRC
+
+The config is outside the repository and must never be committed.
+*** 2 Run the default playbook
+#+BEGIN_SRC
+ansible-playbook playbooks/smolvm/profile.yml -i inventory -K
+#+END_SRC
+
+-K prompts once for the sudo password, because host sudo has no passwordless
+rule. The default run validates the configuration, attaches missing volumes
+to not-running machines, starts each machine that is not running, applies
+the host and guest bind mounts, installs the configured guest packages,
+and verifies the result. The guest may be running or stopped; a stopped
+machine is started automatically. A running machine that needs a volume
+change halts the run with a boxed ACTION REQUIRED message naming the
+machine and the command to run; stop it and re-run.
+*** 3 Log in and use the machines
+Log in as usual with smolvm machine exec. The mounts are in place.
+** How to
+*** Add a volume
+Add a mount entry under the machine in the config and run the default
+playbook. Whether the guest can stay running depends on the mode. After a
+host reboot, run the playbook before starting a machine: a standalone
+start mounts nothing, because the guest helpers refuse to bind from empty
+share directories.
+**** Bind mode: the guest can stay running
+The new directory rides inside the existing share volume, so the run
+creates the share subdirectory, bind-mounts it on the host, creates the
+target directory in the guest, and binds it from the share, all while
+the machine runs.
+**** Direct mode: the guest must be stopped
+The new mount becomes a new volume, and volume changes require a stopped
+machine. A stopped machine is converged during the run; a running machine
+halts the run with an ACTION REQUIRED message, so stop it and re-run.
+*** Remove a volume
+Delete the mount entry from the config and run the default playbook.
+Guest target directories are never removed and no data is deleted in
+either mode.
+**** Bind mode: the guest side is removed live, the host side needs a stop
+The guest-side bind is removed while the machine runs (except a target
+that carries a volume, which the guest side never unmounts). The host
+side cannot be: libkrun pins the host bind while the machine runs, so
+the run halts with an ACTION REQUIRED message naming the machine and the
+stop command; after stopping, re-run with --tags mounts to unmount the
+host bind and prune the emptied share subdirectory.
+**** Direct mode: the guest must be stopped; the volume itself is removed
+*** Manage a subset of machines
+Every run accepts -e limit_machines=name1[,name2...] to scope it to the
+named machines only. Unknown names fail the run. Machines outside the
+scope are untouched, and their ledger entries are carried forward
+unchanged.
+*** Change a volume
+Changing the target path, the share name, the source directory, or the
+readonly setting converges automatically. Whether the guest can stay
+running depends on the change.
+**** Bind mode: readonly flips apply live; source changes need a stopped guest
+A readonly flip is remounted in place while the machine runs. A source
+directory change cannot be applied live: libkrun pins the old host bind
+for as long as the machine runs, so the run halts with an ACTION REQUIRED
+message naming the machine; stop it and re-run, and the stale bind is
+unmounted and re-bound from the new source before the machine starts. A
+rename (the share name changes while the source and target stay)
+converges the same way through the ledger-stale cleanup, with the same
+stopped-machine rule. Stacked binds at a share subdirectory (left by an
+interrupted remediation or by manual stacking) are detected and collapsed
+on the next run while the machine is stopped, and verify requires exactly
+one layer after a successful run.
+**** Direct mode: the guest must be stopped for the volume re-creation
+A source or readonly change removes and re-adds the volume, so the
+stopped-machine rule for volume changes applies.
+**** When remediation is refused
+If the ledger cannot prove that an existing bind is playbook-owned, the
+run halts and names every affected host and guest path. Re-run with
+-e bind_mounts_force_remount=true to accept; forcing unmounts and
+replaces the listed mounts. Forcing also requires a stopped machine for
+the same libkrun reason. Every stack layer is individually
+ownership-checked, so force on its own accepts only layers the playbook
+can prove it created. One bind is proven without the ledger: a mount root
+the kernel marks //deleted - its source directory was deleted while it
+stayed mounted - is playbook-owned when the path minus the marker matches
+the configured or recorded source, and remediates on a stopped machine
+without force, so it never reaches this refusal.
+
+A layer it cannot prove, such as one left behind by an earlier layout
+or mounted by hand, is accepted when its path is named in
+bind_mounts_force_allow_prefixes, an extra-vars value that defaults to
+empty and holds one path or several separated by commas. Only layers at
+or below a named path are accepted, and a layer that is not named stays
+refused even when force is set.
+
+#+BEGIN_SRC
+ansible-playbook playbooks/smolvm/profile.yml -i inventory -K -e bind_mounts_force_remount=true -e bind_mounts_force_allow_prefixes=/home/you/share-old
+#+END_SRC
+** Configuration reference
+The block below shows the shape of the config; every path in it is a
+fictitious example. See the header of playbooks/smolvm/profile.yml for
+the authoritative version.
+
+#+BEGIN_SRC yaml
+mode: bind
+share_root: /home/you/share
+share_target: /mnt/share
+packages:
+  - ansible
+  - github-cli
+machines:
+  - name: my-vm
+    user: you
+    uid: 1000
+    gid: 1000
+    profile_path: /home/you/.bash_profile
+    max_volumes: 4
+    mounts:
+      - name: website
+        src: /home/you/projects/website
+        target: /home/you/projects/website
+        readonly: false
+        uid: 1000
+        gid: 1000
+#+END_SRC
+*** mode selects bind or direct operation
+*** share_root holds the per-mount subdirectories
+It is required in both modes and must be an absolute path without whitespace.
+The provenance ledger is not stored here; it lives in the playbook user's
+state directory (see Ledger).
+*** packages lists the guest packages, in alphabetical order
+They are installed with one pacman call per running machine on the
+software selection; --needed makes a re-run install only what is missing.
+*** share_target is the guest path of the share root in bind mode
+*** machines holds one entry per smolvm machine with unique names
+**** user plus uid and gid select the account and created-dir ownership
+**** profile_path defaults to the bash profile of user in the guest
+**** max_volumes caps the volume slots per machine
+The default is 4. Machines created from a packed .smolmachine archive fit 3,
+and every extra device, such as published ports, costs one more slot; hand
+attached volumes count against the cap just like playbook-managed ones.
+**** create is reserved for future provisioning (validated, not yet acted on)
+Its shape is {image: <registry reference>, cpus: <int>, mem_mib: <int>}.
+**** mounts lists the shared directories
+***** src is the host directory and must exist before the run
+***** target is the absolute guest path, unique per machine
+***** name is the share subdirectory name in bind mode
+It defaults to the last path component of src. The same name and src pair on
+several machines means those machines share the subdirectory.
+***** readonly is optional in both modes
+Direct mode appends :ro to the volume; bind mode remounts the bind read-only.
+***** uid and gid override created-directory ownership
+They default to the machine-level uid and gid.
+** Selection reference
+*** The default run
+Validate, then volume convergence (attach), start, host binds and guest
+binds (mounts), guest packages (software), verify. The host binds are
+mounts-phase work and run after the start, not before it. Works whether
+the guests are running or stopped; a running machine that needs volume
+changes halts the run with an ACTION REQUIRED message naming the machine
+and the command to run.
+*** attach
+Volume convergence only; machines must be not-running (stopped or
+created). A running machine is refused per machine and only when that
+machine has a pending volume change. The default run already converges
+not-running machines automatically, so attach is only needed for
+explicit, step-by-step control.
+*** start
+Boots machines that are not running and waits for exec readiness. Does
+not converge volumes: if a volume change is pending, the next default run
+halts with the ACTION REQUIRED box after starting.
+*** stop
+Syncs each running guest and stops it. Tolerates machines that are
+already stopped.
+*** mounts
+Host binds and guest binds only. Host-side share-tree work applies
+regardless of machine state; the guest binds need a running guest and
+refuse a stopped machine with the start route named; stale-host-bind
+remediation refuses a running machine, so stop first. Does not change
+the volume set; a pending volume change no longer stops this selection.
+*** software
+Installs the configured packages on running machines. A machine that is
+not running is skipped with a note; an empty packages list disables the
+segment.
+*** verify
+Checks every mount read-only. Does not change anything.
+*** teardown
+Undoes everything the playbook created for the scoped machines: host
+binds unmounted, emptied share subdirectories pruned, ledger-recorded
+volumes removed, ledger entries pruned. Direct-mode volume removal
+requires stopped machines. Guest helper copies are the exception: the run
+that used them removes them, and a shutdown clears them with the guest's
+tmpfs /tmp.
+
+Only the default run and --tags attach converge a machine's volume set
+(teardown removes the volumes the ledger records); of the partial
+selections, start refuses a pending volume change, while mounts,
+software, and verify never touch the volume set and do not refuse on one.
+** Mode switching
+*** 1 Stop the machines
+#+BEGIN_SRC
+ansible-playbook playbooks/smolvm/profile.yml -i inventory --tags stop -K
+#+END_SRC
+*** 2 Change the mode or the mount list
+Edit mode and the machines list in the config.
+*** 3 Run the default playbook
+#+BEGIN_SRC
+ansible-playbook playbooks/smolvm/profile.yml -i inventory
+#+END_SRC
+
+Direct to bind converges in one run. Bind to direct takes two runs by
+design: the first converges the volume set, starts the machines, and
+halts with an ACTION REQUIRED message, because the bind-era host binds
+pin while a machine runs; stop the machines again, run with --tags
+mounts to unmount the stale host binds and prune the emptied share
+subdirectories, then run the default playbook to finish and verify.
+Only volumes the ledger proves the playbook created are ever removed. A
+volume the configuration does not want at a target it names, and which
+the ledger cannot prove, halts the run with instructions and the exact
+removal command while the ledger is usable. Hand-attached volumes
+elsewhere, such as a persistent home directory, are untouched and still
+count against max_volumes.
+
+For step-by-step control you can still converge explicitly with --tags
+attach after stopping, and start the machines with --tags start.
+** Safety model
+*** The provenance ledger records what each run observes
+The ledger lives in the playbook user's state directory, outside the
+share, and records volumes, host binds, and guest binds per machine,
+every entry carrying its mode. It records those facts by observation at
+the mount and volume sites, so a run that fails before its final ledger
+write still describes what it attached, and a run that saw and did
+nothing writes nothing. A bind enters the ledger only as an observation:
+the host-bind probe found the target bound from that source, this run
+created the bind, or the guest mount helper reported the target bound
+from the share path. Each such entry carries the observation behind it,
+and the tasks that remediate a bind act only on entries that carry one,
+so an entry from an older run - or one from a run that could not look -
+is not treated as proof. Guest binds carry a mountinfo triple (filesystem
+type, source, root subpath) recorded at mount time; a stale guest bind is
+umounted only when the live triple matches. A stopped machine proves
+nothing about guest binds: a guest bind does not survive a stop, so a
+run that finds a machine stopped records no guest-bind facts for it,
+while the host-side layer and the volumes stay observable. Entries that
+are in the ledger and in the configuration are maintained; entries in
+the ledger but no longer in the configuration are removed; anything else
+is foreign and never touched, except a volume the configuration does not
+want at a target it names, which is refused while the ledger is usable.
+*** Foreign mounts are refused, never unmounted automatically
+A target already mounted with different content than the configured source
+fails the run with the found and expected device:inode identities printed,
+together with the manual resolution path. A bind the ledger does not
+evidence as observed is refused that way too, instead of being unmounted on
+the ledger's word. A volume the configuration does not want at a target it
+names, which the ledger cannot prove, is refused the same way while the
+ledger is usable; -e bind_mounts_force_remount=true accepts removing and
+replacing it, with the machine stopped.
+*** Idempotency compares device and inode, not just mount presence
+Every check compares the device and inode of the mounted target against the
+configured source, so a stale or wrong-source mount is caught instead of
+silently skipped. Source-path comparison is deliberately avoided because the
+kernel reports bind sources in normalized form that cannot be matched by
+string equality. The one exception is the kernel's //deleted mount-root
+marker: the unlinked directory's inode can never be compared again, so
+such a bind is recognized by its path with the marker stripped.
+*** Volume changes fail on running machines instead of stopping them
+The attach selection refuses running machines with a pending change and
+prints the exact commands to run; the playbook never stops a machine with
+live sessions on its own.
+*** Writes are atomic and preserve ownership and mode
+Ledger and profile edits go through a temp file and rename, and the volume
+record a run writes after a volume change goes to the ledger the same way,
+so a reader never sees a partial file.
+*** Check mode skips every mutating task and still verifies
+No volume change, mount, software install, stale-state removal, run lock,
+staging sweep, or ledger write runs. The read-only checks do: the
+host-side probes, the host bind identity check, and the guest
+verifications. A check run stages nothing in a guest and leaves nothing
+behind. Check mode asserts that the current state satisfies the
+contract; it does not predict changes, so on a state that is not
+converged it stops with the same refusals a real run raises. A stopped
+machine is not guest-verified, because the guest checks need a running
+machine.
+** Shutdown semantics
+smolvm machine stop is graceful: the guest agent runs a full sync, flushing
+every filesystem including virtiofs, remounts the storage read-only to
+checkpoint its journal, and only then is the VMM terminated, after which the
+host fsyncs the disk files. Guest processes get no chance to clean up; it is
+sync-then-kill, like pulling power after sync, so save editor buffers first.
+The stop selection adds a redundant guest sync before stopping as
+belt-and-braces.
+** Glossary
+*** Bind mode
+One share volume per machine; each configured directory is bind-mounted
+into the share root on the host and from the share to its target path
+inside the guest. A guest-side umount is skipped when the target carries
+a volume: the guest cannot tell a volume mount from a bind, and the mount
+at that target is smolvm's own.
+*** Direct mode
+Each configured directory is attached as its own smolvm volume, with no
+share volume and no guest-side footprint.
+*** Device:inode identity
+The pair of device and inode numbers reported by stat. Equal identity
+means two paths reference the same content; this is how bind mounts are
+verified, because bind sources cannot be compared as strings; the
+kernel reports them in normalized form.
+*** Exec user
+The user as whom smolvm machine exec runs commands inside a guest.
+Management operations require it to be root.
+*** Foreign state
+Any mount, volume, or file the ledger cannot prove the playbook created.
+Ignored when nothing depends on it; refused when it sits where the
+configuration wants a different mount or volume. Never removed unless
+-e bind_mounts_force_remount=true accepts it.
+*** Force remount
+Replacing a bind, or an attached volume at a target the configuration
+names, whose ownership the ledger cannot prove, authorized by re-running
+with -e bind_mounts_force_remount=true; the refusal message lists every
+affected mount and volume before anything is forced. A foreign guest-side
+mount is not covered: the run prints the exact umount command instead.
+*** Guest bind: a bind mount from the share path to the target path
+*** Guest-side share path: share_target followed by the mount name
+*** Host bind: a bind mount from a source directory to its share subdirectory
+*** Ledger
+The file .bind-mounts-state.yml in the playbook user's state directory,
+~/.local/state/bind-mount-on-host-and-guest/, mode 0644. It records
+everything the playbook created, is read at the start of a run, and is
+written again by the playbook's own user, without sudo or become, whenever
+a volume change is applied and at the end of a successful run; it is the
+basis of provenance and stale-element cleanup. It sits outside the share
+root, so no guest can see it.
+*** Mount entry: one host directory plus its guest target path in the config
+*** share_root: the host directory holding one subdirectory per mount entry
+*** share_target: the guest path at which the share root is mounted
+*** Share volume: the one smolvm volume backed by the share root
+*** Stale element: ledger-proven state the configuration no longer lists
+*** Volume: a host directory attached to a machine as its own virtiofs device
+** Troubleshooting
+*** A missing config fails fast with instructions
+*** A target mounted with a different source is remediated or refused
+A proven-stale bind is unmounted and re-bound from the configured source
+while the machine is stopped; a running machine halts the run with an
+ACTION REQUIRED message first (libkrun pins the old bind). A bind whose
+source directory was deleted while it stayed mounted - the kernel marks
+its mount root //deleted - is treated as ours when the path minus that
+marker matches the configured or recorded source, and remediates on a
+stopped machine without force. Guest binds carry an extra proof: a guest
+layer is umounted only when its live mountinfo triple (filesystem type,
+source, root subpath) matches the triple recorded at mount time; a
+replaced layer is refused with both triples printed, and ledger entries
+recorded before triples existed are reported, never removed, and are
+re-marked by the next run's re-mount. When the ledger cannot prove the
+bind is ours, the run halts and lists every affected host and guest
+path; re-run with -e bind_mounts_force_remount=true to accept, or
+unmount manually. A volume the configuration does not want at a target
+it names, which the ledger cannot prove, is refused the same way while
+the ledger is usable; a guest mount whose target carries a volume is not
+unmounted, and the run prints the volume and the host-side recovery
+instead.
+*** After a host reboot a standalone start mounts nothing
+Host binds are runtime state and do not survive reboots, so the share
+subdirectories are empty and the guest helpers refuse to bind from them.
+Run the playbook: it re-creates the host binds and the guest mounts.
+*** Refused volume changes mean stop, then re-run
+The playbook never stops a machine with live sessions on its own. After
+stopping, re-run the default playbook (no --tags): it applies the volume
+changes, starts the machine, and finishes the rest. For step-by-step
+control, run --tags attach first, then --tags start.
+*** An exceeded volume budget counts hand-attached volumes too
+Remove mounts from the config, or raise max_volumes only if you know the
+machine has headroom; see smolvm issue
+[[https://github.com/smol-machines/smolvm/issues/941][#941]].
+*** An unreadable ledger disables cleanup for that run
+Fix or delete
+~/.local/state/bind-mount-on-host-and-guest/.bind-mounts-state.yml; the
+playbook user owns it, so no sudo is needed. Deleting it loses the cleanup
+bookkeeping, and with no proof at all a volume the configuration does not
+want at a target it names is left alone instead of refused. While the file
+exists and is unreadable nothing is written either, so fix or delete it,
+then re-run to record the volumes a run changes. With the file gone, a run
+that applies a volume change writes the volume facts it recorded.
+*** The smolvm exec user must be root for the playbook to manage a guest
+The playbook reaches a guest only through smolvm machine exec, which runs
+as the exec user configured on the machine. Guest-side mounts need root;
+the preflight refuses a machine whose contract it cannot evaluate.

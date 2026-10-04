@@ -1,35 +1,30 @@
 * bind-mounts architecture
 ** Components
 *** The configuration
-vars.yml on the host is the single source of truth: machines, users, mounts,
-mode, and the volume ceiling. It is untracked; the checked-in example is
-vars.yml.example.
+The operator config is the single source of truth: machines, users, mounts,
+mode, the guest package list, and the volume ceiling. It lives outside the
+repository, in the invoking user's home:
+~/.config/homelab/playbooks/smolvm/vars.yml (untracked by construction).
 *** The playbook and the role
-bind-mounts.yml is the command-line wrapper: it keeps the documented CLI
-(tags, -e limit_machines, -K), owns the machine lifecycle (start, stop,
-auto-start, exec-wait) and the guest artifact install and removal, and
-delegates the volume, bind, and verify work to the bind_mounts capability
+playbooks/smolvm/profile.yml is the entry point: a thin play that maps the
+host to its machines and converges them through the bind_mounts capability
 role (roles/bind_mounts/), invoked once per segment with bind_mounts_phase
-set to attach, mounts, verify, or teardown. The role runs a shared prelude
-(registry validation, one inventory parse through the filter plugin, ledger
-read, volume plan, completeness check, run lock, staging sweep) and is the
-only ledger writer: wrapper-owned tags write no ledger. Every run accepts
--e limit_machines=name1[,name2...] to scope it to the named machines only;
-ledger entries of scoped-out machines are carried forward unchanged.
-*** The profile play
-playbooks/smolvm/profile.yml is the second entry point and the intended
-sole one after the wrapper retires: it maps the host to its machines and
-converges them through the same bind_mounts role. It owns the machine
+set to attach, mounts, verify, or teardown. The play owns the machine
 lifecycle (start, stop, exec wait) and guest package installation (one
 pacman call per running machine, from the alphabetical packages list in
-its config); the role keeps volumes, binds, verification, and the ledger.
-Its configuration lives outside the repository, in the invoking user's
-home: ~/.config/homelab/playbooks/smolvm/vars.yml, in the same shape as
-the wrapper's vars.yml plus packages and an optional reserved per-machine
-create spec (image, cpus, mem_mib) for future provisioning. Selections:
-default (volumes, start, mounts, software, verify), plus attach, stop,
-verify, mounts, teardown. The wrapper's retirement is gated on this play;
-until the gate the wrapper CLI stays the documented interface.
+its config); the role runs a shared prelude (registry validation, one
+inventory parse through the filter plugin, ledger read, volume plan,
+completeness check, run lock, staging sweep) and is the only ledger
+writer: the play itself writes no ledger. Its configuration lives outside
+the repository, in the invoking user's home:
+~/.config/homelab/playbooks/smolvm/vars.yml - machines, users, mounts,
+mode, share fields, packages, and an optional reserved per-machine create
+spec (image, cpus, mem_mib) for future provisioning. Selections: default
+(volumes, start, mounts, software, verify), plus attach, stop, verify,
+mounts, teardown. Every run accepts -e limit_machines=name1[,name2...] to
+scope it to the named machines only; ledger entries of scoped-out machines
+are carried forward unchanged. Machines are never created or deleted by
+the play: a configured name that smolvm does not know fails the run.
 *** The filter plugin
 filter_plugins/smolvm_facts.py parses smolvm machine ls --verbose into
 per-machine state and volume lists. The format was verified against real
@@ -49,25 +44,22 @@ directory (~/.local/state/bind-mount-on-host-and-guest/), mode 0644, and
 records everything the playbook created. A run reads it at the start and
 rewrites it as the invoking user, without become; it is host-only, and no
 guest can see it.
-*** Guest-side artifacts
-Four per machine: the root-owned script at the configured script path
-(by default /usr/local/sbin/bind-mount-on-guest.sh), the sudoers drop-in
-at the configured path (by default /etc/sudoers.d/010-bind-mounts, in a
-directory the guest's sudoers includes), the managed block in the
-primary user profile, and the helper copies under the configured helper
-directory (/tmp/010-bind-mounts-helpers by default). The helpers live
-only for the length of a run: they are copied root-owned immediately
-before each use, and the run that used them removes them again. The
-directory sits in the guest's tmpfs /tmp, so a shutdown clears it too. That
-block carries bind-mounts-specific markers, so a block that another
-role's blockinfile wrote into the same profile is never matched, edited,
-or removed.
+*** Guest-side footprint
+The role installs nothing persistent in guests. The only guest-side
+presence is the helper copies under the configured helper directory
+(/tmp/010-bind-mounts-helpers by default): they live only for the length
+of a run - copied root-owned immediately before each use and removed by
+the run that used them; the directory sits in the guest's tmpfs /tmp, so
+a shutdown clears it too. The legacy persistent artifacts (installed
+script, sudoers drop-in, managed profile block) are decommissioned and
+no longer part of the model; a guest holding any of them is residue for
+the operator to remove.
 *** The smolvm volumes
 Bind mode attaches share_root as one volume per machine. Direct mode attaches
 one volume per configured mount and removes the share volume.
 ** Bind-mode data flow
 #+BEGIN_SRC text
-vars.yml ──▶ bind-mounts.yml ──▶ mount --bind <src> <share_root>/<name>
+profile.yml ──▶ bind_mounts role ──▶ mount --bind <src> <share_root>/<name>
                                  (host, as root)
         │
         ▼  smolvm volume: one virtiofs device, one IRQ slot
@@ -81,7 +73,7 @@ login fallback: .bash_profile ─▶ sudo -n <script path>
 #+END_SRC
 ** Direct-mode data flow
 #+BEGIN_SRC text
-vars.yml ──▶ bind-mounts.yml ──▶ smolvm machine update --volume <src>:<target>[:ro]
+profile.yml ──▶ bind_mounts role ──▶ smolvm machine update --volume <src>:<target>[:ro]
         │  machine stopped: converged by the default run or --tags attach:
         │    add missing, remove ledger-stale, keep foreign
         ▼
@@ -90,14 +82,14 @@ vars.yml ──▶ bind-mounts.yml ──▶ smolvm machine update --volume <src
 #+END_SRC
 ** Modes
 *** Bind mode
-One volume slot per machine regardless of mount count. Guests see bind mounts
-from the share, and the login hook re-applies them at login. The default run
+One volume slot per machine regardless of mount count. Guests see bind
+mounts from the share, applied by the role at convergence. The default run
 attaches the share volume to a stopped machine that lacks it and halts with
 an ACTION REQUIRED message when a running machine needs volume changes; the
 attach tag converges volumes explicitly on stopped machines.
 *** Direct mode
 One volume per configured mount, managed by machine update, with nothing
-to run at login and no guest-side artifacts beyond the helper copy a run
+to run at login and no guest-side footprint beyond the helper copy a run
 makes for its own length. Subject to the volume
 ceiling.
 *** Switching between modes
@@ -123,8 +115,8 @@ by itself and halts with guidance when a running machine needs volume
 changes; the attach tag refuses running machines instead of stopping them.
 *** Exec runs as the configured user
 smolvm machine exec executes as the machine's configured user, root by
-default. The playbook relies on this for guest management and refuses the
-install phase when the exec user is not root.
+default. The role relies on this for guest management and preflights the
+exec privilege its phases need before any mutation.
 ** Provenance ledger
 *** Format
 #+BEGIN_SRC yaml
@@ -192,25 +184,15 @@ volume refusal is suspended for that run: without proof the run leaves
 volumes at configured targets alone. A run that applies a volume change
 writes the volume facts it recorded.
 ** Security model
-The login hook must run as root inside the guest. A NOPASSWD sudoers rule
-that points at a script inside the shared volume is equivalent to full root,
-because the guest user can rewrite that script. This design closes the hole:
-the playbook renders the script from the configuration, copies it to a
-root-owned 0755 path, and scopes the sudoers rule to exactly that path.
-The configured script path must stay in a root-owned directory: the copy
-is made root-owned 0755, but a copy the guest user can replace is
-equivalent to full root. The default under /usr/local/sbin is one.
-
-#+BEGIN_SRC
-<user> ALL=(root) NOPASSWD: /usr/local/sbin/bind-mount-on-guest.sh
-#+END_SRC
-
-The rule is validated with visudo before activation, and the profile hook
-invokes the script with sudo -n so a missing rule fails fast instead of
-prompting. Guest management itself uses smolvm machine exec, which runs as
-the machine's configured user, so no host-side passwordless sudo is involved;
-host-side bind mounts use Ansible become with password sudo, while the
-ledger is written as the invoking user without become.
+The role installs nothing persistent in guests and holds no credentials
+there. Guest management runs through smolvm machine exec as the machine's
+configured user (root by the guest contract), so no guest-side passwordless
+sudo is involved; host-side bind mounts use Ansible become with password
+sudo, while the ledger is written as the invoking user without become.
+The one-time escalation surface the legacy design carried (a NOPASSWD
+sudoers rule scoped to a root-owned script copy, plus a profile hook
+invoking it) is decommissioned; a guest still holding any of those is
+residue for the operator to remove.
 ** Failure and corner cases
 *** Stale mounts are remediated when proven, refused otherwise — on stopped machines
 A stale host or guest bind the ledger proves is playbook-owned is
@@ -266,19 +248,18 @@ changes require stopped machines: the default run converges stopped
 machines by itself and halts with an ACTION REQUIRED message when a
 running machine needs volume changes; the attach tag refuses them. Only the default run and --tags attach converge a volume set (teardown
 removes the volumes the ledger records); of the partial selections, start
-and install refuse a pending volume change, while mounts and verify never
+refuses a pending volume change, while mounts, software, and verify never
 touch the volume set and do not refuse on one.
-*** Non-root exec user fails the install phase
-*** Missing guest user or home directory fails the install phase
-The install preflight checks that the configured user exists inside the
-guest and that the profile directory is present; either missing fails the
-run with plain guidance (create the user and home, or point profile_path
-at an existing directory) instead of a helper traceback.
+*** Missing guest prerequisites fail the phase before any mutation
+Each phase preflights, per machine, only the prerequisites it needs (the
+guest tools, root exec, and for the mounts phase the configured user with
+a home directory); one refusal names every missing item with plain
+guidance instead of a helper traceback. The role never installs
+prerequisites and never trusts the image blindly.
 *** Exceeded volume budget fails with counts and the issue link
 A volume the ledger cannot prove at a configured target stops the run
 before the budget check.
 *** Missing or non-directory sources fail before any mutation
-*** Corrupt sudoers content is rejected before activation
 *** Check mode skips every mutating task and still verifies
 The host-side probes run, and so do the three verify tasks: the host bind
 identity check and the two guest verifications, each marked check mode
