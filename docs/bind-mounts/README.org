@@ -41,15 +41,16 @@ and prune the emptied share subdirectories, then run the default playbook
 to finish and verify.
 
 The mode choice exists because of a smolvm constraint: a directory attached
-directly is its own virtiofs device, and libkrun (the VMM underneath) caps
-x86_64 machines at 11 virtio-mmio IRQs, one per device. Balloon, rng,
-console, and two block devices take five; the root filesystem, the volume
-mounts, and the vsock agent channel share the rest, so a directly created
-machine fits at most 4 host volumes (3 for machines created from a packed
-.smolmachine archive), and one fewer when anything else adds a device, such
-as published ports. The ceiling lives in libkrun, and smolvm has no
-preflight for it; see smolvm issue
-[[https://github.com/smol-machines/smolvm/issues/941][#941]].
+directly is its own virtiofs device, and libkrun (the VMM underneath) gives
+each virtio device one interrupt (IRQ) on x86_64. smolvm 1.23.0 and later
+bundle a libkrun that offers IRQs 5-23; earlier releases offered 5-15.
+Measured on smolvm 1.23.2 with an archlinux image: a directly created
+machine boots with up to 11 host volumes when created with --net and up to
+10 without, and one more volume fails the boot with krun_start_enter -22
+(libkrun detail: "no more IRQs are available"). Hosts older than 1.23.0 boot
+with at most 4. Why --net leaves one slot more was not investigated. The
+ceiling lives in libkrun, and smolvm has no preflight for it; see smolvm
+issue [[https://github.com/smol-machines/smolvm/issues/941][#941]].
 bind mode makes the ceiling irrelevant to the number of shared directories;
 direct mode is subject to it.
 ** Quick start
@@ -199,7 +200,7 @@ machines:
     user: you
     uid: 1000
     gid: 1000
-    max_volumes: 4
+    max_volumes: 10
     mounts:
       - name: website
         src: /home/you/projects/website
@@ -223,13 +224,17 @@ software selection; --needed makes a re-run install only what is missing.
 The role installs nothing in guests, so no profile hook reads it; the field
 is still accepted so older configuration files load.
 **** max_volumes caps the volume slots per machine
-The default is 4. Machines created from a packed .smolmachine archive fit 3,
-and every extra device, such as published ports, costs one more slot; hand
-attached volumes count against the cap just like playbook-managed ones. The
-cap is checked twice: every run refuses a machine that already has more
-volumes attached than the cap, and the attach step refuses, before changing
-anything, a machine whose volumes would exceed the cap once the run's own
-adds and removes are applied (see The volume budget).
+The default is 10, the lowest ceiling measured on smolvm 1.23.2 (see the mode
+choice above). Set it explicitly to override it, and to 4 on a host older
+than 1.23.0. Machines created from a packed .smolmachine archive attach one
+more virtiofs device and so fit one fewer (the smolvm maintainer's analysis in
+issue #941, not re-measured here), and any other device a machine gets, such
+as one added by published ports, can cost another slot, so lower the cap when
+you add one. Hand attached volumes count against the cap just like
+playbook-managed ones. The cap is checked twice: every run refuses a machine
+that already has more volumes attached than the cap, and the attach step
+refuses, before changing anything, a machine whose volumes would exceed the
+cap once the run's own adds and removes are applied (see The volume budget).
 **** create is reserved for future provisioning (validated, not yet acted on)
 Its shape is {image: <registry reference>, cpus: <int>, mem_mib: <int>}.
 **** mounts lists the shared directories
@@ -515,11 +520,13 @@ COMPLETENESS-REFUSED means the machine already has more volumes attached
 than max_volumes; VOLUME-BUDGET-REFUSED means this run's own volume changes
 would take it past the cap, and nothing was changed. Either way, remove
 mounts from the config, remove a volume by hand with the machine stopped, or
-raise max_volumes only if you know the machine has headroom; see smolvm issue
-[[https://github.com/smol-machines/smolvm/issues/941][#941]]. smolvm enforces
+raise max_volumes only if you know the machine has headroom (on smolvm 1.23.2
+a machine boots with up to 11 volumes with --net and 10 without; see the mode
+choice above and smolvm issue
+[[https://github.com/smol-machines/smolvm/issues/941][#941]]). smolvm enforces
 the ceiling when the machine boots, not when volumes are attached, so an
 over-cap machine attaches fine and then fails to start with
-krun_start_enter -22.
+krun_start_enter -22, whose detail reads "no more IRQs are available".
 *** An unreadable ledger disables cleanup for that run
 Fix or delete
 ~/.local/state/bind-mount-on-host-and-guest/.bind-mounts-state.yml; the

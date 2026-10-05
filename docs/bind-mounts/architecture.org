@@ -106,12 +106,15 @@ verifies the result. The attach tag remains available for explicit,
 step-by-step convergence on stopped machines.
 ** smolvm constraints
 *** The volume ceiling is a libkrun device budget
-x86_64 exposes 11 virtio-mmio IRQs, one per virtio device. Balloon, rng,
+Each x86_64 virtio-mmio device takes one IRQ. smolvm 1.23.0 and later bundle a
+libkrun that offers IRQs 5-23; earlier releases offered 5-15. Balloon, rng,
 console, and two block devices are fixed; the root filesystem, each volume,
-and the vsock agent channel share the remainder, so a directly created
-machine fits 4 host volumes, a packed one fits 3, and every extra device,
-such as virtio-net for published ports, costs another slot. Crossing the
-budget fails the boot with an opaque krun_start_enter -22. See smolvm issue
+and the vsock agent channel share the remainder. Measured on smolvm 1.23.2: a
+directly created machine boots with up to 11 host volumes with --net and 10
+without; hosts older than 1.23.0 fit 4, and a machine created from a packed
+archive fits one fewer (the smolvm maintainer's analysis, not re-measured).
+Crossing the budget fails the boot with krun_start_enter -22, whose detail
+reads "no more IRQs are available". See smolvm issue
 [[https://github.com/smol-machines/smolvm/issues/941][#941]].
 *** Volumes are directories only, never single files
 *** Volume changes need a stopped machine
