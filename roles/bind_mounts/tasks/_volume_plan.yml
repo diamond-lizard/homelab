@@ -1,10 +1,11 @@
 ---
 # Prelude step 7: the volume plan, per examined machine, from the entry's own
-# mode. Classification only - the applying and the refusing renderings happen
-# in the phase files; the refusal rows collected here feed the ACTION REQUIRED
-# boxes. One ownership rule: ledger proof on realpath-normalized sources, or
-# force plus allow-prefixes; removal names the source the machine reports
-# while the volume is listed, the recorded source otherwise.
+# mode. Classification only - the applying renderings happen in the phase
+# files; the refusal for the unproven rows is raised by the prelude in
+# _volume_refusals.yml. One ownership rule: ledger proof on
+# realpath-normalized sources, or force plus allow-prefixes; removal names
+# the source the machine reports while the volume is listed, the recorded
+# source otherwise.
 # An unproven volume is one at a target the config names (share_target in
 # bind mode, plus every mount target); a volume anywhere else - e.g. a
 # hand-attached home that is an ancestor of configured targets - is foreign,

@@ -1,0 +1,25 @@
+---
+# Prelude step 7a: the volume census. Every observed volume per examined
+# machine, each labeled with its provenance (ledger-proven or unproven);
+# max_volumes counts EVERY attached volume, so the census is every observed
+# volume. Built before the unproven-volume refusal so a refused run still
+# prints the end-of-run summary.
+- name: Census every observed volume per examined machine
+  ansible.builtin.set_fact:
+    bind_mounts_volume_census: >-
+      {%- set out = {} -%}
+      {%- for m in bind_mounts_scoped_machines -%}
+      {%- set plan = bind_mounts_volume_plans[m.name] -%}
+      {%- set rows = [] -%}
+      {%- for ov in bind_mounts_sections[m.name].mounts -%}
+      {%- set proven = (plan.managed_resolved | selectattr('src', 'eq', ov.src | realpath)
+                         | selectattr('target', 'eq', ov.target) | list | length) > 0 -%}
+      {%- set _ = rows.append({
+            'source': ov.src,
+            'target': ov.target,
+            'ro': ov.ro,
+            'provenance': 'ledger-proven' if proven else 'unproven' }) -%}
+      {%- endfor -%}
+      {%- set _ = out.update({m.name: rows}) -%}
+      {%- endfor -%}
+      {{ out }}

@@ -29,7 +29,10 @@
 - name: Prelude volume plan
   ansible.builtin.include_tasks: _volume_plan.yml
 
-- name: Prelude volume-plan refusal data
+- name: Prelude volume census
+  ansible.builtin.include_tasks: _volume_census.yml
+
+- name: Prelude unproven-volume refusal
   ansible.builtin.include_tasks: _volume_refusals.yml
 
 - name: Prelude completeness check

@@ -1,8 +1,18 @@
 ---
-# Prelude step 7b: the structured refusal rows for unproven volumes - the
-# data the phase files render into the ACTION REQUIRED boxes (machine,
-# target, observed vs configured source, the exact force switch, and the
-# manual removal command).
+# Prelude step 7b: the unproven-volume refusal. The volume plan (step 7)
+# leaves a volume the ledger cannot prove at a configured target
+# untouched and lists it as unproven; this step collects those rows (each
+# with its exact manual removal command), selects the ones that refuse,
+# and fails before the over-cap check, the run lock, and the staging
+# sweep, so nothing has been changed when it fires - in check mode as
+# well. A row where the configuration wants a different volume
+# (configured is a source) always refuses. A row at a mount target where
+# no volume is wanted (configured is none) refuses only while the ledger
+# is usable: an unreadable ledger proves nothing about any volume, and
+# LEDGER-UNREADABLE already told the operator why. The attach, mounts,
+# verify, and default phases refuse; teardown only removes what the
+# ledger proves and stays runnable. Force replaces or removes a volume
+# inside the plan itself, so a forced volume is no longer a row here.
 - name: Collect the structured refusal rows for unproven volumes
   ansible.builtin.set_fact:
     bind_mounts_volume_refusals: >-
@@ -24,10 +34,61 @@
       {%- endfor -%}
       {{ out }}
 
-- name: Report volumes at configured targets without ledger proof
-  ansible.builtin.debug:
-    msg: >-
-      VOLUME-UNPROVEN: {{ bind_mounts_volume_refusals | length }} volume(s) at
-      configured targets the ledger cannot prove; refusal data:
-      {{ bind_mounts_volume_refusals }}.
-  when: bind_mounts_volume_refusals | length > 0
+- name: Select the unproven volumes that refuse this run
+  ansible.builtin.set_fact:
+    bind_mounts_unproven_refused: >-
+      {%- set out = [] -%}
+      {%- for r in bind_mounts_volume_refusals -%}
+      {%- if r.configured is not none or bind_mounts_ledger_usable | bool -%}
+      {%- set _ = out.append(r) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: >-
+    ACTION REQUIRED: volume(s) at configured targets need ledger proof
+  vars:
+    bind_mounts_unproven_box: >-
+      {%- set out = ['=' * 70] -%}
+      {%- set _ = out.append('%-70s' | format('  VOLUME-UNPROVEN-REFUSED: volume(s) at configured targets')) -%}
+      {%- set _ = out.append('%-70s' | format('  without ledger proof:')) -%}
+      {%- set _ = out.append('%-70s' | format('')) -%}
+      {%- for r in bind_mounts_unproven_refused -%}
+      {%- set _ = out.append('%-70s' | format('  ' ~ r.machine ~ ' ' ~ r.target)) -%}
+      {%- set _ = out.append('%-70s' | format('      observed:   ' ~ r.observed)) -%}
+      {%- set _ = out.append('%-70s' | format('      configured: ' ~ (r.configured if r.configured is not none
+            else 'no volume is wanted at this target'))) -%}
+      {%- set _ = out.append('%-70s' | format('      ledger:     ' ~ r.ledger)) -%}
+      {%- set _ = out.append('%-70s' | format('')) -%}
+      {%- endfor -%}
+      {%- set _ = out.append('%-70s' | format('  The ledger does not prove this playbook created these')) -%}
+      {%- set _ = out.append('%-70s' | format('  volumes. Volume changes need a stopped machine: stop the')) -%}
+      {%- set _ = out.append('%-70s' | format('  machine(s) above (smolvm machine stop --name <machine-name>),')) -%}
+      {%- set _ = out.append('%-70s' | format('  then re-run the playbook with:')) -%}
+      {%- set _ = out.append('%-70s' | format('')) -%}
+      {%- set _ = out.append('%-70s' | format('      -e bind_mounts_force_remount=true')) -%}
+      {%- set _ = out.append('%-70s' | format('')) -%}
+      {%- if bind_mounts_unproven_refused | selectattr('configured', 'none') | list | length > 0 -%}
+      {%- set _ = out.append('%-70s' | format('  A volume the configuration does not want at its target is')) -%}
+      {%- set _ = out.append('%-70s' | format('  removed only when its source also lies at or below a path')) -%}
+      {%- set _ = out.append('%-70s' | format('  named in this extra variable as well:')) -%}
+      {%- set _ = out.append('%-70s' | format('')) -%}
+      {%- set _ = out.append('%-70s' | format('      -e bind_mounts_force_allow_prefixes=<path at or above observed>')) -%}
+      {%- set _ = out.append('%-70s' | format('')) -%}
+      {%- endif -%}
+      {%- set _ = out.append('%-70s' | format('  A forced volume is detached, and replaced where the')) -%}
+      {%- set _ = out.append('%-70s' | format('  configuration wants one. To deal with it yourself instead,')) -%}
+      {%- set _ = out.append('%-70s' | format('  stop the machine(s) and run, per volume:')) -%}
+      {%- set _ = out.append('%-70s' | format('')) -%}
+      {%- for r in bind_mounts_unproven_refused -%}
+      {%- set _ = out.append('%-70s' | format('      ' ~ r.manual_command)) -%}
+      {%- endfor -%}
+      {%- set _ = out.append('%-70s' | format('')) -%}
+      {%- set _ = out.append('%-70s' | format('  Nothing else was changed by this run.')) -%}
+      {%- set _ = out.append('=' * 70) -%}
+      {{ out }}
+  ansible.builtin.fail:
+    msg: "{{ bind_mounts_unproven_box }}"
+  when:
+    - bind_mounts_unproven_refused | length > 0
+    - bind_mounts_phase in ['default', 'attach', 'mounts', 'verify']
