@@ -5,6 +5,11 @@
 # boxes. One ownership rule: ledger proof on realpath-normalized sources, or
 # force plus allow-prefixes; removal names the source the machine reports
 # while the volume is listed, the recorded source otherwise.
+# An unproven volume is one at a target the config names (share_target in
+# bind mode, plus every mount target); a volume anywhere else - e.g. a
+# hand-attached home that is an ancestor of configured targets - is foreign,
+# stays untouched, and falls through to external. Force removal additionally
+# requires a path-segment match on an allow-prefix (path_under_any).
 - name: Compute the volume convergence plan per machine
   ansible.builtin.set_fact:
     bind_mounts_volume_plans: >-
@@ -64,16 +69,18 @@
       {%- set _ = removes.append('--remove-volume='
             ~ (obs_at.src if obs_at is not none else v.src) ~ ':' ~ v.target) -%}
       {%- endfor -%}
+      {%- set named_targets = desired_targets + (m.mounts | default([], true) | map(attribute='target') | list) -%}
       {%- for ov in observed -%}
       {%- if ov.target in desired_targets + stale_targets -%}{%- else -%}
       {%- set proven = (managed_resolved | selectattr('src', 'eq', ov.src | realpath)
                          | selectattr('target', 'eq', ov.target) | list | length) > 0 -%}
-      {%- set force_ok = bind_mounts_force_remount | bool
-            and (bind_mounts_force_allow_prefixes | select('in', ov.src) | list | length) > 0 -%}
+      {%- set named = ov.target in named_targets -%}
+      {%- set force_ok = bind_mounts_force_remount | bool and named
+            and (ov.src | path_under_any(bind_mounts_force_allow_prefixes)) -%}
       {%- if force_ok and not proven -%}
       {%- set _ = removes.append('--remove-volume=' ~ ov.src ~ ':' ~ ov.target) -%}
       {%- endif -%}
-      {%- if not proven and not force_ok -%}
+      {%- if named and not proven and not force_ok -%}
       {%- set _ = unproven.append({'machine': m.name, 'target': ov.target,
             'observed': ov.src, 'configured': none,
             'ledger': 'no volume recorded at this target'}) -%}

@@ -1,3 +1,4 @@
+import os
 import re
 
 _ALPHA_RE = re.compile(r"[A-Za-z]+")
@@ -33,6 +34,23 @@ def _scan(text):
     return sections, rejected
 
 
+def _norm(path):
+    return os.path.realpath('/' + str(path).lstrip('/'))
+
+
+def _under_any(path, prefixes):
+    # an -e value arrives as one comma-separated string; iterating it
+    # unsplit would test each character as a prefix
+    if isinstance(prefixes, str):
+        prefixes = prefixes.split(',')
+    sp = _norm(path)
+    for p in prefixes or []:
+        pn = _norm(str(p).rstrip('/'))
+        if sp == pn or sp.startswith(pn + '/'):
+            return True
+    return False
+
+
 def _gate(sections, names):
     """Classify each passed name that is present in ``sections``."""
     out = {}
@@ -49,13 +67,14 @@ def _gate(sections, names):
 
 
 class FilterModule(object):
-    """Ansible filters for parsing and validating `smolvm machine ls --verbose` output."""
+    """Ansible filters for parsing and validating `smolvm machine ls --verbose` output, plus path helpers."""
 
     def filters(self):
         return {
             "smolvm_ls_sections": self.smolvm_ls_sections,
             "smolvm_rejected_rows": self.smolvm_rejected_rows,
             "smolvm_state_gate": self.smolvm_state_gate,
+            "path_under_any": self.path_under_any,
         }
 
     @staticmethod
@@ -85,3 +104,8 @@ class FilterModule(object):
         ``message`` names both). Names absent from ``sections``: not classified.
         """
         return _gate(sections, names)
+
+    @staticmethod
+    def path_under_any(path, prefixes):
+        """True when path equals or lies below one of the prefixes, compared by whole path segments; no prefixes means False."""
+        return _under_any(path, prefixes)
