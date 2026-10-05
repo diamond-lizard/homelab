@@ -42,9 +42,12 @@
   ansible.builtin.file:
     path: "{{ bind_mounts_state_dir }}/staging"
     state: absent
+  # Per-run staging housekeeping, not managed state: never a change.
+  changed_when: false
 
 - name: Recreate the staging directory for this run
   ansible.builtin.file:
     path: "{{ bind_mounts_state_dir }}/staging"
     state: directory
     mode: "0700"
+  changed_when: false

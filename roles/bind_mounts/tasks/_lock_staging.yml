@@ -18,6 +18,8 @@
     path: "{{ bind_mounts_state_dir }}/staging"
     state: directory
     mode: "0700"
+  # Per-run lock and staging housekeeping, not managed state: never a change.
+  changed_when: false
 
 - name: Draw this run's lock-holder token
   ansible.builtin.set_fact:
@@ -38,7 +40,7 @@
                     dead = True
                 if dead: os.remove(sent)
       - "{{ bind_mounts_state_dir }}"
-  changed_when: true
+  changed_when: false
 
 - name: Record the ansible run's anchor pid
   ansible.builtin.command:
@@ -98,3 +100,5 @@
   async: 3600
   poll: 0
   register: bind_mounts_lock_holder
+  # Per-run lock housekeeping, not managed state: never a change.
+  changed_when: false

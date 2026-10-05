@@ -57,6 +57,8 @@
   ansible.builtin.file:
     path: "{{ bind_mounts_state_dir }}/run.{{ bind_mounts_lock_token }}.holder"
     state: absent
+  # Per-run lock and staging housekeeping, not managed state: never a change.
+  changed_when: false
   when:
     - bind_mounts_lock_token is defined
     - not ansible_check_mode
@@ -65,6 +67,7 @@
   ansible.builtin.file:
     path: "{{ bind_mounts_state_dir }}/staging"
     state: absent
+  changed_when: false
   when:
     - bind_mounts_lock_token is defined
     - not ansible_check_mode
