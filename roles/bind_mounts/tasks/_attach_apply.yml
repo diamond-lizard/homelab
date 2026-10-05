@@ -52,17 +52,7 @@
       {%- set out = {} -%}
       {%- for m in bind_mounts_scoped_machines -%}
       {%- if m.name in bind_mounts_volume_payload -%}
-      {%- if m.mode == 'bind' -%}
-      {%- set rows = [{'source': m.share_root | realpath, 'target': m.share_target,
-                       'ro': false, 'provenance': 'ledger-proven'}] -%}
-      {%- else -%}
-      {%- set rows = [] -%}
-      {%- for mnt in m.mounts -%}
-      {%- set _ = rows.append({'source': mnt.src, 'target': mnt.target,
-            'ro': mnt.readonly, 'provenance': 'ledger-proven'}) -%}
-      {%- endfor -%}
-      {%- endif -%}
-      {%- set _ = out.update({m.name: rows}) -%}
+      {%- set _ = out.update({m.name: bind_mounts_volume_projection[m.name]}) -%}
       {%- else -%}
       {%- set _ = out.update({m.name: bind_mounts_volume_census.get(m.name, [])}) -%}
       {%- endif -%}

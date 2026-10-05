@@ -1,0 +1,48 @@
+---
+# Attach step 1b: project the volume set the apply will leave, per machine the apply
+# will touch (not running, non-empty plan), and refuse before any `smolvm machine update`
+# when it exceeds max_volumes. The ceiling is a hard libkrun device budget (smolvm
+# issue #941): crossing it fails the next boot with krun_start_enter -22, so the
+# role never proceeds toward it; raising max_volumes is the only override.
+- name: Project the volume set the attach apply will leave
+  ansible.builtin.set_fact:
+    bind_mounts_volume_projection: >-
+      {%- set out = {} -%}
+      {%- for m in bind_mounts_apply_machines -%}
+      {%- if m.name in bind_mounts_planned_machines -%}
+      {%- set plan = bind_mounts_volume_plans[m.name] -%}
+      {%- set _ = out.update({m.name: bind_mounts_volume_census[m.name]
+            | smolvm_project_census(plan.add_rows, plan.remove_rows)}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Refuse a projected over-cap machine before any volume change
+  vars:
+    bind_mounts_projected_rows: "{{ bind_mounts_volume_projection[bind_mounts_over.name] }}"
+    bind_mounts_added_targets: "{{ bind_mounts_volume_plans[bind_mounts_over.name].add_rows | map(attribute='target') | list }}"
+    bind_mounts_projection_lines: >-
+      {%- set lines = [] -%}
+      {%- for r in bind_mounts_projected_rows -%}
+      {%- set _ = lines.append(r.source ~ ' -> ' ~ r.target ~ (' (ro)' if r.ro else '')
+            ~ ' (' ~ r.provenance ~ ')'
+            ~ (' [added by this run]' if r.target in bind_mounts_added_targets else '')) -%}
+      {%- endfor -%}
+      {{ lines | join('; ') }}
+  ansible.builtin.fail:
+    msg: >-
+      VOLUME-BUDGET-REFUSED: machine '{{ bind_mounts_over.name }}' would carry
+      {{ bind_mounts_projected_rows | length }} attached volume(s) after this
+      run's volume changes, exceeding max_volumes={{ bind_mounts_over.max_volumes }}:
+      {{ bind_mounts_projection_lines }}. The smolvm volume ceiling is a hard
+      device budget (smolvm issue #941): crossing it fails the next boot with
+      krun_start_enter -22. Remove mounts from the registry, raise max_volumes
+      only if you know the machine has headroom, or remove the extra volume(s)
+      by hand; nothing was changed.
+  loop: "{{ bind_mounts_apply_machines }}"
+  loop_control:
+    loop_var: bind_mounts_over
+    label: "{{ bind_mounts_over.name }}"
+  when:
+    - bind_mounts_over.name in bind_mounts_volume_projection
+    - bind_mounts_volume_projection[bind_mounts_over.name] | length > bind_mounts_over.max_volumes

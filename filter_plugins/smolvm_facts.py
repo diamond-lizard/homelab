@@ -51,6 +51,19 @@ def _under_any(path, prefixes):
     return False
 
 
+def _same_volume(a_src, a_tgt, b_src, b_tgt):
+    return a_tgt == b_tgt and os.path.realpath(a_src) == os.path.realpath(b_src)
+
+
+def _project_census(rows, adds, removes):
+    out = [dict(r) for r in rows or []
+           if not any(_same_volume(r['source'], r['target'], x['src'], x['target']) for x in removes or [])]
+    for a in adds or []:
+        if not any(_same_volume(r['source'], r['target'], a['src'], a['target']) for r in out):
+            out.append({'source': a['src'], 'target': a['target'], 'ro': bool(a.get('ro')), 'provenance': 'ledger-proven'})
+    return out
+
+
 def _gate(sections, names):
     """Classify each passed name that is present in ``sections``."""
     out = {}
@@ -67,7 +80,7 @@ def _gate(sections, names):
 
 
 class FilterModule(object):
-    """Ansible filters for parsing and validating `smolvm machine ls --verbose` output, plus path helpers."""
+    """Ansible filters for parsing and validating `smolvm machine ls --verbose` output, plus path helpers and census projection."""
 
     def filters(self):
         return {
@@ -75,6 +88,7 @@ class FilterModule(object):
             "smolvm_rejected_rows": self.smolvm_rejected_rows,
             "smolvm_state_gate": self.smolvm_state_gate,
             "path_under_any": self.path_under_any,
+            "smolvm_project_census": self.smolvm_project_census,
         }
 
     @staticmethod
@@ -109,3 +123,8 @@ class FilterModule(object):
     def path_under_any(path, prefixes):
         """True when path equals or lies below one of the prefixes, compared by whole path segments; no prefixes means False."""
         return _under_any(path, prefixes)
+
+    @staticmethod
+    def smolvm_project_census(rows, adds, removes):
+        """Census rows after a smolvm machine update: removes (source+target) filter first, adds append unless the same source+target is already present; added rows are labelled ledger-proven."""
+        return _project_census(rows, adds, removes)

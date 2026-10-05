@@ -51,13 +51,13 @@
       {%- for v in desired -%}
       {%- set matching = observed | selectattr('target', 'eq', v.target) | first | default(none) -%}
       {%- if matching is none -%}
-      {%- set _ = adds.append('--volume=' ~ v.src ~ ':' ~ v.target ~ (':ro' if v.ro else '')) -%}
+      {%- set _ = adds.append({'src': v.src, 'target': v.target, 'ro': v.ro}) -%}
       {%- elif matching.src != v.src or matching.ro != v.ro -%}
       {%- set proven = (managed_resolved | selectattr('src', 'eq', matching.src | realpath)
                          | selectattr('target', 'eq', matching.target) | list | length) > 0 -%}
       {%- if proven or bind_mounts_force_remount | bool -%}
-      {%- set _ = adds.append('--volume=' ~ v.src ~ ':' ~ v.target ~ (':ro' if v.ro else '')) -%}
-      {%- set _ = removes.append('--remove-volume=' ~ matching.src ~ ':' ~ matching.target) -%}
+      {%- set _ = adds.append({'src': v.src, 'target': v.target, 'ro': v.ro}) -%}
+      {%- set _ = removes.append({'src': matching.src, 'target': matching.target}) -%}
       {%- set _ = readds.append(matching.target) -%}
       {%- else -%}
       {%- set _ = unproven.append({'machine': m.name, 'target': matching.target,
@@ -68,8 +68,7 @@
       {%- endfor -%}
       {%- for v in stale -%}
       {%- set obs_at = observed | selectattr('target', 'eq', v.target) | first | default(none) -%}
-      {%- set _ = removes.append('--remove-volume='
-            ~ (obs_at.src if obs_at is not none else v.src) ~ ':' ~ v.target) -%}
+      {%- set _ = removes.append({'src': (obs_at.src if obs_at is not none else v.src), 'target': v.target}) -%}
       {%- endfor -%}
       {%- set named_targets = desired_targets + (m.mounts | default([], true) | map(attribute='target') | list) -%}
       {%- for ov in observed -%}
@@ -80,7 +79,7 @@
       {%- set force_ok = bind_mounts_force_remount | bool and named
             and (ov.src | path_under_any(bind_mounts_force_allow_prefixes)) -%}
       {%- if force_ok and not proven -%}
-      {%- set _ = removes.append('--remove-volume=' ~ ov.src ~ ':' ~ ov.target) -%}
+      {%- set _ = removes.append({'src': ov.src, 'target': ov.target}) -%}
       {%- endif -%}
       {%- if named and not proven and not force_ok -%}
       {%- set _ = unproven.append({'machine': m.name, 'target': ov.target,
@@ -91,13 +90,22 @@
       {%- endfor -%}
       {%- set unproven_targets = unproven | map(attribute='target') | list -%}
       {%- set external = observed | rejectattr('target', 'in', desired_targets + stale_targets + unproven_targets) | list -%}
+      {%- set add_args = [] -%}
+      {%- for a in adds -%}
+      {%- set _ = add_args.append('--volume=' ~ a.src ~ ':' ~ a.target ~ (':ro' if a.ro else '')) -%}
+      {%- endfor -%}
+      {%- set remove_args = [] -%}
+      {%- for r in removes -%}
+      {%- set _ = remove_args.append('--remove-volume=' ~ r.src ~ ':' ~ r.target) -%}
+      {%- endfor -%}
       {%- set _ = result.update({m.name: {
-            'add': adds,
-            'remove': removes,
+            'add': add_args,
+            'remove': remove_args,
+            'add_rows': adds,
+            'remove_rows': removes,
             'readd': readds,
             'unproven': unproven,
             'external': external,
-            'desired_count': desired | length,
             'managed_resolved': managed_resolved }}) -%}
       {%- endfor -%}
       {{ result }}

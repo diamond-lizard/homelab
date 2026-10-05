@@ -16,6 +16,9 @@
 - name: Read the observed machine states for the attach phase
   ansible.builtin.include_tasks: _attach_states.yml
 
+- name: Project the volume set the apply will leave and refuse a projected over-cap
+  ansible.builtin.include_tasks: _attach_projection.yml
+
 - name: Apply the volume plans and observe what the run converged
   ansible.builtin.include_tasks: _attach_apply.yml
 
