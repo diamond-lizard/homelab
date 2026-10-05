@@ -147,15 +147,24 @@ machines:
 The volume plan separates three cases for a volume the ledger cannot prove.
 A volume at a target where the configuration wants a different volume (the
 share target in bind mode, a mount target in direct mode) is replaced when
-the ledger proves it ours or force is set, and reported as unproven
+the ledger proves it ours or force is set, and refused as unproven
 otherwise. A volume at any other target the configuration names (in bind
 mode, a mount target) is unproven; it is removed only with force plus a source
 under a bind_mounts_force_allow_prefixes entry, compared by whole path
 segments. A volume at a target the configuration does not name is foreign:
 never removed, listed as external, and counted against max_volumes. An
-unproven volume is reported with a VOLUME-UNPROVEN message carrying the exact
-removal command; the report does not stop the run. The plan does not consult
-whether the ledger is readable: an unreadable ledger is an empty one.
+unproven volume refuses the run: the shared prelude, right after the plan and
+the census and before the max_volumes check, the run lock, and the staging
+sweep, fails with a VOLUME-UNPROVEN-REFUSED box carrying the exact removal
+command, so nothing has changed when it fires, in check mode as well. It
+applies to every phase except teardown, which removes only what the ledger
+proves and must stay usable for cleanup. A volume at a target where the
+configuration wants a different one always refuses; a volume at a mount
+target where no volume is wanted refuses only while the ledger is usable. The
+plan itself does not consult whether the ledger is readable (an unreadable
+ledger is an empty one); the refusal applies the usability rule to the plan's
+rows. A forced volume is replaced or removed by the plan, so it is no longer
+unproven.
 *** Bind facts record what a run observed
 The host-bind probe, the bind this run creates, the guest mount helper and
 the re-mount after a remediation are the observations the bind entries are
@@ -188,15 +197,17 @@ subdirectories are pruned, and volumes are removed with machine update.
 *** Foreign state is never touched
 Anything not in the ledger is left alone, except a volume at a target the
 configuration names that force accepts removing or replacing. An unproven
-volume at a configured target is reported with a VOLUME-UNPROVEN message, not
-refused; a guest bind target that carries a volume is refused by the mounts
-phase. A foreign mount sitting at a wanted target fails the run whether or
-not the ledger is readable.
+volume at a configured target is refused with VOLUME-UNPROVEN-REFUSED before
+any change; a guest bind target that carries a volume is also refused by the
+mounts phase, the second line of defence. A foreign mount sitting at a wanted
+target fails the run whether or not the ledger is readable.
 *** An unreadable ledger disables cleanup for that run
 Nothing managed is removed until the ledger is fixed or deleted: the working
-ledger is empty for the run, so no volume is ledger-proven and volumes at
-configured targets that differ from the configuration are reported as
-unproven. Nothing is written while the file exists and is unreadable; with
+ledger is empty for the run, so no volume is ledger-proven and a volume at a
+target where the configuration wants a different one is still refused as
+unproven, and a volume the configuration does not want at a mount target is
+left alone and listed as unproven in the end-of-run summary. Nothing is
+written while the file exists and is unreadable; with
 the file gone, a run that applies a volume change writes the volume facts it
 recorded.
 ** Security model
@@ -274,7 +285,8 @@ a home directory); one refusal names every missing item with plain
 guidance instead of a helper traceback. The role never installs
 prerequisites and never trusts the image blindly.
 *** Exceeded volume budget fails with counts and the issue link
-The prelude counts every observed volume and refuses a machine that already
+The unproven-volume refusal runs before either budget check. The prelude counts
+every observed volume and refuses a machine that already
 has more than max_volumes attached (COMPLETENESS-REFUSED, naming each
 volume). The attach step then projects the volume set its apply would leave,
 with smolvm_project_census over the census, the plan's add_rows, and its
@@ -286,7 +298,9 @@ device ceiling bites at boot, with an opaque krun_start_enter -22.
 Every role invocation prints the volume census before the play recap, built by
 the prelude from the observed volumes. After an attach apply, the census for a
 converged machine is replaced by the projected set, so foreign volumes stay
-listed, added volumes are ledger-proven, and removed volumes are gone.
+listed, added volumes are ledger-proven, and removed volumes are gone. The
+census is built before the unproven-volume refusal, so a refused run still
+prints it.
 *** Missing or non-directory sources fail before any mutation
 *** Check mode skips every mutating task and still verifies
 The host-side probes run, and so do the three verify tasks: the host bind

@@ -21,9 +21,9 @@ match the configuration, stack layers whose ownership the ledger cannot
 prove, a machine state outside the known vocabulary, or a run that would
 take a machine past its volume ceiling halt the run with instructions
 instead of anything being modified. A volume at a target the configuration
-names whose ownership the ledger cannot prove is reported with a
-VOLUME-UNPROVEN message and left alone; the run does not stop for it (see
-Foreign mounts).
+names whose ownership the ledger cannot prove halts the run with a
+VOLUME-UNPROVEN-REFUSED box before anything changes, in every selection
+except teardown (see Foreign mounts).
 
 Two modes are supported. In bind mode the configuration consolidates every
 configured directory under one share directory (share_root), attaches that
@@ -178,6 +178,10 @@ paths are compared by whole path segments after resolving symlinks, so
 /home/you/share matches /home/you/share/old but not /home/you/share-old.
 A volume at a target the configuration does not name is never removed, with
 or without force. Volumes are removed only from a stopped machine.
+
+Without force, or when a source is not covered by a named prefix, the
+unproven volume halts the run before any change; see An unproven volume at a
+configured target halts the run under Troubleshooting.
 ** Configuration reference
 The block below shows the shape of the config; every path in it is a
 fictitious example. See the header of playbooks/smolvm/profile.yml for
@@ -273,14 +277,16 @@ Installs the configured packages on running machines. A machine that is
 not running is skipped with a note; an empty packages list disables the
 segment.
 *** verify
-Checks every mount read-only. Does not change anything.
+Checks every mount read-only. Does not change anything. Like attach and
+mounts, it halts first on an unproven volume at a configured target
+(VOLUME-UNPROVEN-REFUSED), although it changes nothing.
 *** teardown
 Undoes everything the playbook created for the scoped machines: host
 binds unmounted, emptied share subdirectories pruned, ledger-recorded
 volumes removed, ledger entries pruned. Direct-mode volume removal
 requires stopped machines. Guest helper copies are the exception: the run
 that used them removes them, and a shutdown clears them with the guest's
-tmpfs /tmp.
+tmpfs /tmp. It is never blocked by an unproven volume.
 
 Only the default run and --tags attach converge a machine's volume set
 (teardown removes the volumes the ledger records); of the partial
@@ -305,10 +311,10 @@ pin while a machine runs; stop the machines again, run with --tags
 mounts to unmount the stale host binds and prune the emptied share
 subdirectories, then run the default playbook to finish and verify.
 Only volumes the ledger proves the playbook created are removed, unless you
-force it (see When remediation is refused). A volume the configuration does
-not want at a target it names, and which the ledger cannot prove, is
-reported with a VOLUME-UNPROVEN message that names the exact removal
-command, and is left in place; the run carries on. Hand-attached volumes
+force it (see When remediation is refused). A volume at a target the
+configuration names, which the ledger cannot prove, halts the run with
+VOLUME-UNPROVEN-REFUSED, a box naming the exact removal command, and is
+left in place. Hand-attached volumes
 elsewhere, such as a persistent home directory, are untouched and still
 count against max_volumes.
 
@@ -335,20 +341,23 @@ run that finds a machine stopped records no guest-bind facts for it,
 while the host-side layer and the volumes stay observable. Entries that
 are in the ledger and in the configuration are maintained; entries in
 the ledger but no longer in the configuration are removed; anything else
-is foreign and never touched, except a volume the configuration does not
-want at a target it names, which is refused while the ledger is usable.
+is foreign and never touched, and a volume at a target the configuration
+names that the ledger cannot prove refuses the run instead (see Foreign
+mounts).
 *** Foreign mounts are refused, never unmounted automatically
 A target already mounted with different content than the configured source
 fails the run with the found and expected device:inode identities printed,
 together with the manual resolution path. A bind the ledger does not
 evidence as observed is refused that way too, instead of being unmounted on
-the ledger's word. A volume the configuration does not want at a target it
-names, which the ledger cannot prove, is not refused: each phase prints a
-VOLUME-UNPROVEN message naming the machine, target, observed source, and the
-exact smolvm machine update --remove-volume command, and the run carries on
-without touching the volume (force replaces or removes it as described under
-When remediation is refused). A guest bind target that carries a volume is
-refused by the mounts phase, which never binds over a volume.
+the ledger's word. A volume at a target the configuration names, which the
+ledger cannot prove, is refused too: every selection except teardown halts
+before any change with a VOLUME-UNPROVEN-REFUSED box naming the machine,
+target, observed source, what the configuration wants there, and the exact
+smolvm machine update --remove-volume command, and the volume is never
+touched (force replaces or removes it as described under When remediation
+is refused). With an unreadable ledger only a volume where the configuration
+wants a different one is refused. A guest bind target that carries a volume
+is also refused by the mounts phase, which never binds over a volume.
 *** Idempotency compares device and inode, not just mount presence
 Every check compares the device and inode of the mounted target against the
 configured source, so a stale or wrong-source mount is caught instead of
@@ -424,16 +433,16 @@ The user as whom smolvm machine exec runs commands inside a guest.
 Management operations require it to be root.
 *** Foreign state
 Any mount, volume, or file the ledger cannot prove the playbook created.
-Ignored when nothing depends on it; when it sits where the configuration
-wants a different mount or volume, a bind is refused and a volume is
-reported with VOLUME-UNPROVEN. Never removed unless
+Ignored when nothing depends on it; when it sits at a target the
+configuration names, a bind or a volume is refused (a volume with
+VOLUME-UNPROVEN-REFUSED). Never removed unless
 -e bind_mounts_force_remount=true accepts it.
 *** Force remount
 Replacing a bind, or removing or replacing an attached volume at a target
 the configuration names, whose ownership the ledger cannot prove,
 authorized by re-running with -e bind_mounts_force_remount=true; for binds
 the refusal message lists every affected mount before anything is forced,
-for volumes the VOLUME-UNPROVEN message lists them. A foreign guest-side
+for volumes the VOLUME-UNPROVEN-REFUSED box lists them. A foreign guest-side
 mount is not covered: the run prints the exact umount command instead.
 *** Guest bind: a bind mount from the share path to the target path
 *** Guest-side share path: share_target followed by the mount name
@@ -469,15 +478,33 @@ recorded before triples existed are reported, never removed, and are
 re-marked by the next run's re-mount. When the ledger cannot prove the
 bind is ours, the run halts and lists every affected host and guest
 path; re-run with -e bind_mounts_force_remount=true to accept, or
-unmount manually. A volume the configuration does not want at a target
-it names, which the ledger cannot prove, is reported with VOLUME-UNPROVEN
-and left alone; a guest mount whose target carries a volume is not
+unmount manually. A volume at a target the configuration names, which the
+ledger cannot prove, halts the run with VOLUME-UNPROVEN-REFUSED and is left
+alone; a guest mount whose target carries a volume is not
 unmounted, and the run prints the volume and the host-side recovery
 instead.
 *** After a host reboot a standalone start mounts nothing
 Host binds are runtime state and do not survive reboots, so the share
 subdirectories are empty and the guest helpers refuse to bind from them.
 Run the playbook: it re-creates the host binds and the guest mounts.
+*** An unproven volume at a configured target halts the run
+VOLUME-UNPROVEN-REFUSED means a volume sits at a target the configuration
+names and the ledger cannot prove this playbook attached it. The run stops
+in the prelude of every selection except teardown (attach, mounts, verify
+and the default run), in check mode as well, before the volume budget
+check, the run lock, and any change, so nothing was modified. The box lists,
+per volume, the machine, target, observed source, what the configuration
+wants there (a different source, or no volume at all), and the exact
+removal command. Two ways forward, both with the machine stopped: re-run
+with -e bind_mounts_force_remount=true (a volume where the configuration
+wants a different one is replaced; a volume at a mount target where none
+is wanted is removed only when you also pass -e
+bind_mounts_force_allow_prefixes=<path at or above its source>), or remove
+the volume yourself with smolvm machine update --name <machine>
+--remove-volume=<source>:<target>. The next run then converges. Teardown is
+never blocked by it. With an unreadable ledger only the volumes where the
+configuration wants a different one are refused; the rest stay listed as
+unproven in the end-of-run summary.
 *** Refused volume changes mean stop, then re-run
 The playbook never stops a machine with live sessions on its own. After
 stopping, re-run the default playbook (no --tags): it applies the volume
@@ -498,11 +525,13 @@ Fix or delete
 ~/.local/state/bind-mount-on-host-and-guest/.bind-mounts-state.yml; the
 playbook user owns it, so no sudo is needed. Deleting it loses the cleanup
 bookkeeping: nothing is recorded as playbook-created until a run records the
-volumes again, so no stale cleanup happens, and a volume at a configured
-target that differs from the configuration is reported as unproven. While the
-file exists and is unreadable nothing is written either, so fix or delete it,
-then re-run to record the volumes a run changes. With the file gone, a run
-that applies a volume change writes the volume facts it recorded.
+volumes again, so no stale cleanup happens, and a volume at a target where the
+configuration wants a different volume is still refused
+(VOLUME-UNPROVEN-REFUSED), while a volume the configuration does not want at
+a mount target is left alone and shown as unproven in the end-of-run summary.
+While the file exists and is unreadable nothing is written either, so fix or
+delete it, then re-run to record the volumes a run changes. With the file
+gone, a run that applies a volume change writes the volume facts it recorded.
 *** The smolvm exec user must be root for the playbook to manage a guest
 The playbook reaches a guest only through smolvm machine exec, which runs
 as the exec user configured on the machine. Guest-side mounts need root;
