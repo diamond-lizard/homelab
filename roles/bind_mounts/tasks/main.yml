@@ -10,7 +10,8 @@
 # order-tolerant and writes the ledger only through _ledger_write.yml.
 - name: Run the shared prelude
   block:
-    - ansible.builtin.include_tasks: _prelude.yml
+    - name: Include the shared prelude
+      ansible.builtin.include_tasks: _prelude.yml
 
     - name: Refuse a phase outside the allowed set
       ansible.builtin.fail:
@@ -36,10 +37,14 @@
       when: bind_mounts_phase == 'teardown'
 
     - name: Default run (attach, then mounts, then verify)
-      block:
-        - ansible.builtin.include_tasks: phase_attach.yml
-        - ansible.builtin.include_tasks: phase_mounts.yml
-        - ansible.builtin.include_tasks: phase_verify.yml
       when: bind_mounts_phase == 'default'
+      block:
+        - name: Include the attach phase
+          ansible.builtin.include_tasks: phase_attach.yml
+        - name: Include the mounts phase
+          ansible.builtin.include_tasks: phase_mounts.yml
+        - name: Include the verify phase
+          ansible.builtin.include_tasks: phase_verify.yml
   always:
-    - ansible.builtin.include_tasks: _epilogue.yml
+    - name: Include the shared epilogue
+      ansible.builtin.include_tasks: _epilogue.yml

@@ -33,8 +33,7 @@
       # stays at the same indent, one tool per line.
       - >-
         {%- for bind_mounts_preflight_tool in bind_mounts_preflight_tools -%}
-        command -v {{ bind_mounts_preflight_tool }} >/dev/null 2>&1 || printf '%s\n' '{{ bind_mounts_preflight_tool }}';
-        {%- endfor -%}
+        command -v {{ bind_mounts_preflight_tool }} >/dev/null 2>&1 || printf '%s\n' '{{ bind_mounts_preflight_tool }}';{%- endfor -%}
         [ "$(id -u)" = 0 ] || echo ROOT-EXEC
   loop: "{{ bind_mounts_preflight_machines }}"
   loop_control:

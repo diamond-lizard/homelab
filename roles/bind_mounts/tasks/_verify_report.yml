@@ -22,11 +22,11 @@
       - "{{ '%-70s' | format('') }}"
       - "{{ '%-70s' | format('    ' ~ ('machine: ' ~ bind_mounts_failure_row.machine
              ~ '  target: ' ~ bind_mounts_failure_row.target)) }}"
-      - "{{ '%-70s' | format(      '      ' ~ bind_mounts_failure_row.detail) }}"
+      - "{{ '%-70s' | format('      ' ~ bind_mounts_failure_row.detail) }}"
       - "{{ '%-70s' | format('') }}"
       - "{{ '%-70s' | format('  The verify phase is read-only: nothing was changed.') }}"
       - "{{ '%-70s' | format('  Re-converge the machine with the mounts phase, then re-run') }}"
-      - "{{ '%-70s' | format(      '  the verify phase.') }}"
+      - "{{ '%-70s' | format('  the verify phase.') }}"
       - "{{ '=' * 70 }}"
   loop: "{{ (bind_mounts_host_verify_failed | default([]))
             + (bind_mounts_guest_verify_failed | default([])) }}"

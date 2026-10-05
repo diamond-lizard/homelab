@@ -6,7 +6,6 @@
 # parity; lane truth follows machine state); the configured-binds refusal
 # box keeps its mounts filter, so only machines that requested binds are
 # named there.
-# The stopped-machine conclusion clear runs here, after the stale-lane cleanup and before every guest refusal site: the stop is the observed event, so it is recorded even when a later refusal fails the run. The clear covers every examined bind-mode not-running machine (attach-phase parity; lane truth follows machine state); the refusal box keeps its mounts filter, so only machines that requested binds are named there.
 - name: Collect the examined bind-mode machines observed as stopped
   ansible.builtin.set_fact:
     bind_mounts_stopped_bind: >-
@@ -33,4 +32,3 @@
                     | map('regex_replace', '.*', '[]'))) }}
   ansible.builtin.include_tasks: _write_guest_clear.yml
   when: bind_mounts_stopped_bind | length > 0
-

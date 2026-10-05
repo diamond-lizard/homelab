@@ -95,7 +95,10 @@
     - bind_mounts_write_count | int > 0
   tags: [always]
 
+# Not a handler: the install must complete inside this ledger write
+# (later phases and the epilogue read the ledger); a handler would defer
+# it to the end of the play.
 - name: Install the rendered ledger into place (content-verified)
   ansible.builtin.include_tasks: _write_install.yml
-  when: bind_mounts_write_render.changed | default(false) | bool
+  when: bind_mounts_write_render.changed | default(false) | bool  # noqa: no-handler
   tags: [always]
