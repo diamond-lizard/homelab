@@ -8,8 +8,10 @@
 # An unproven volume is one at a target the config names (share_target in
 # bind mode, plus every mount target); a volume anywhere else - e.g. a
 # hand-attached home that is an ancestor of configured targets - is foreign,
-# stays untouched, and falls through to external. Force removal additionally
-# requires a path-segment match on an allow-prefix (path_under_any).
+# stays untouched, and falls through to external. Force removal of an unproven
+# volume at such a named target additionally requires a path-segment match on
+# an allow-prefix (path_under_any); the desired-target mismatch branch above
+# the loop replaces on force alone, by design.
 - name: Compute the volume convergence plan per machine
   ansible.builtin.set_fact:
     bind_mounts_volume_plans: >-
