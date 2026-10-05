@@ -10,7 +10,7 @@ documents the vocabulary.
 - inventory/ -- the host inventory
 - playbooks/ -- the profile plays, one directory per component
 - filter_plugins/ -- repository-wide filter plugins
-- docs/ -- per-component architecture notes
+- docs/ -- per-component manuals and architecture notes
 - roles/ -- capability roles (bind_mounts: smolvm host/guest share binds)
 - CONTEXT.md -- the project vocabulary
 
@@ -22,9 +22,9 @@ filter plugins.
 
 * Components
 
-The bind-mounts playbook lives under playbooks/bind-mounts/. Its manual is
-playbooks/bind-mounts/README.org and its architecture notes are
-docs/bind-mounts/architecture.org.
+The bind_mounts capability role (roles/bind_mounts/) shares host
+directories with smolvm guests. Its manual is docs/bind-mounts/README.org
+and its architecture notes are docs/bind-mounts/architecture.org.
 
 The smolvm machine profile play lives at playbooks/smolvm/ (machine
 lifecycle, guest packages, and bind-mount convergence through the

@@ -15,12 +15,15 @@ observed in a provenance ledger.
 
 The play manages any number of machines and users from the same file, is
 safe to re-run in any state reachable through normal operation, and never
-touches a mount or volume it cannot prove it created. Unusual states are
-refused, not auto-fixed: a mount whose content does not match the
-configuration, a volume at a target the configuration names whose
-ownership the ledger cannot prove, stack layers whose ownership the ledger
-cannot prove, or a machine state outside the known vocabulary halt the run
-with instructions instead of being modified.
+removes a mount or volume it cannot prove it created unless you force it.
+Unusual states are refused, not auto-fixed: a mount whose content does not
+match the configuration, stack layers whose ownership the ledger cannot
+prove, a machine state outside the known vocabulary, or a run that would
+take a machine past its volume ceiling halt the run with instructions
+instead of anything being modified. A volume at a target the configuration
+names whose ownership the ledger cannot prove is reported with a
+VOLUME-UNPROVEN message and left alone; the run does not stop for it (see
+Foreign mounts).
 
 Two modes are supported. In bind mode the configuration consolidates every
 configured directory under one share directory (share_root), attaches that
@@ -164,6 +167,17 @@ refused even when force is set.
 #+BEGIN_SRC
 ansible-playbook playbooks/smolvm/profile.yml -i inventory -K -e bind_mounts_force_remount=true -e bind_mounts_force_allow_prefixes=/home/you/share-old
 #+END_SRC
+
+Volumes follow the same switch with two differences. A volume at a target
+where the configuration wants a different volume (the share target in bind
+mode, a mount target in direct mode) is replaced when force is set, whatever
+its source. An unproven volume at any other target the configuration names
+(in bind mode, a mount target) is removed only when force is set and its
+source lies at or below a path named in bind_mounts_force_allow_prefixes;
+paths are compared by whole path segments after resolving symlinks, so
+/home/you/share matches /home/you/share/old but not /home/you/share-old.
+A volume at a target the configuration does not name is never removed, with
+or without force. Volumes are removed only from a stopped machine.
 ** Configuration reference
 The block below shows the shape of the config; every path in it is a
 fictitious example. See the header of playbooks/smolvm/profile.yml for
@@ -181,7 +195,6 @@ machines:
     user: you
     uid: 1000
     gid: 1000
-    profile_path: /home/you/.bash_profile
     max_volumes: 4
     mounts:
       - name: website
@@ -202,11 +215,17 @@ software selection; --needed makes a re-run install only what is missing.
 *** share_target is the guest path of the share root in bind mode
 *** machines holds one entry per smolvm machine with unique names
 **** user plus uid and gid select the account and created-dir ownership
-**** profile_path defaults to the bash profile of user in the guest
+**** profile_path is accepted but has no effect
+The role installs nothing in guests, so no profile hook reads it; the field
+is still accepted so older configuration files load.
 **** max_volumes caps the volume slots per machine
 The default is 4. Machines created from a packed .smolmachine archive fit 3,
 and every extra device, such as published ports, costs one more slot; hand
-attached volumes count against the cap just like playbook-managed ones.
+attached volumes count against the cap just like playbook-managed ones. The
+cap is checked twice: every run refuses a machine that already has more
+volumes attached than the cap, and the attach step refuses, before changing
+anything, a machine whose volumes would exceed the cap once the run's own
+adds and removes are applied (see The volume budget).
 **** create is reserved for future provisioning (validated, not yet acted on)
 Its shape is {image: <registry reference>, cpus: <int>, mem_mib: <int>}.
 **** mounts lists the shared directories
@@ -226,13 +245,16 @@ binds (mounts), guest packages (software), verify. The host binds are
 mounts-phase work and run after the start, not before it. Works whether
 the guests are running or stopped; a running machine that needs volume
 changes halts the run with an ACTION REQUIRED message naming the machine
-and the command to run.
+and the command to run, and a machine whose volumes would exceed
+max_volumes once the run's changes are applied halts it with
+VOLUME-BUDGET-REFUSED before anything changes.
 *** attach
 Volume convergence only; machines must be not-running (stopped or
 created). A running machine is refused per machine and only when that
-machine has a pending volume change. The default run already converges
-not-running machines automatically, so attach is only needed for
-explicit, step-by-step control.
+machine has a pending volume change. A not-running machine whose projected
+volume count would exceed max_volumes is refused before any change. The
+default run already converges not-running machines automatically, so
+attach is only needed for explicit, step-by-step control.
 *** start
 Boots machines that are not running and waits for exec readiness. Does
 not converge volumes: if a volume change is pending, the next default run
@@ -262,8 +284,8 @@ tmpfs /tmp.
 
 Only the default run and --tags attach converge a machine's volume set
 (teardown removes the volumes the ledger records); of the partial
-selections, start refuses a pending volume change, while mounts,
-software, and verify never touch the volume set and do not refuse on one.
+selections, start, mounts, software, and verify never touch the volume set
+and do not refuse on a pending change.
 ** Mode switching
 *** 1 Stop the machines
 #+BEGIN_SRC
@@ -282,10 +304,11 @@ halts with an ACTION REQUIRED message, because the bind-era host binds
 pin while a machine runs; stop the machines again, run with --tags
 mounts to unmount the stale host binds and prune the emptied share
 subdirectories, then run the default playbook to finish and verify.
-Only volumes the ledger proves the playbook created are ever removed. A
-volume the configuration does not want at a target it names, and which
-the ledger cannot prove, halts the run with instructions and the exact
-removal command while the ledger is usable. Hand-attached volumes
+Only volumes the ledger proves the playbook created are removed, unless you
+force it (see When remediation is refused). A volume the configuration does
+not want at a target it names, and which the ledger cannot prove, is
+reported with a VOLUME-UNPROVEN message that names the exact removal
+command, and is left in place; the run carries on. Hand-attached volumes
 elsewhere, such as a persistent home directory, are untouched and still
 count against max_volumes.
 
@@ -320,9 +343,12 @@ fails the run with the found and expected device:inode identities printed,
 together with the manual resolution path. A bind the ledger does not
 evidence as observed is refused that way too, instead of being unmounted on
 the ledger's word. A volume the configuration does not want at a target it
-names, which the ledger cannot prove, is refused the same way while the
-ledger is usable; -e bind_mounts_force_remount=true accepts removing and
-replacing it, with the machine stopped.
+names, which the ledger cannot prove, is not refused: each phase prints a
+VOLUME-UNPROVEN message naming the machine, target, observed source, and the
+exact smolvm machine update --remove-volume command, and the run carries on
+without touching the volume (force replaces or removes it as described under
+When remediation is refused). A guest bind target that carries a volume is
+refused by the mounts phase, which never binds over a volume.
 *** Idempotency compares device and inode, not just mount presence
 Every check compares the device and inode of the mounted target against the
 configured source, so a stale or wrong-source mount is caught instead of
@@ -335,8 +361,29 @@ such a bind is recognized by its path with the marker stripped.
 The attach selection refuses running machines with a pending change and
 prints the exact commands to run; the playbook never stops a machine with
 live sessions on its own.
+*** The volume budget is checked before and after the plan
+max_volumes counts every attached volume, hand-attached ones included. The
+prelude of every phase refuses a machine that already has more volumes
+attached than the cap (COMPLETENESS-REFUSED, naming each volume). The attach
+step then projects the volume set its apply would leave, the observed
+volumes minus the removes plus the adds, merged the way smolvm machine
+update merges them, and refuses with VOLUME-BUDGET-REFUSED before running
+any update when that count exceeds the cap. The refusal names every
+projected volume, marks the ones this run would add, fires in check mode
+too, and has no force switch: remove mounts from the configuration, remove
+a volume by hand, or raise max_volumes if you know the machine has
+headroom. A readd, which removes one volume and adds another at the same
+target, nets to zero. Only machines the apply will touch (not running, with
+a non-empty plan) are projected.
+*** The end-of-run summary lists every attached volume
+Each phase prints, before the play recap, the volumes observed on every
+examined machine with source, target, read-only state, and provenance
+(ledger-proven or unproven), counted against max_volumes. After an attach
+run that applied a volume change the summary shows the set the run left:
+volumes that stayed keep their label, volumes the run added are
+ledger-proven, and volumes it removed are gone.
 *** Writes are atomic and preserve ownership and mode
-Ledger and profile edits go through a temp file and rename, and the volume
+Ledger writes go through a temp file and rename, and the volume
 record a run writes after a volume change goes to the ledger the same way,
 so a reader never sees a partial file.
 *** Check mode skips every mutating task and still verifies
@@ -346,9 +393,9 @@ host-side probes, the host bind identity check, and the guest
 verifications. A check run stages nothing in a guest and leaves nothing
 behind. Check mode asserts that the current state satisfies the
 contract; it does not predict changes, so on a state that is not
-converged it stops with the same refusals a real run raises. A stopped
-machine is not guest-verified, because the guest checks need a running
-machine.
+converged it stops with the same refusals a real run raises, including the
+projected volume budget refusal. A stopped machine is not guest-verified,
+because the guest checks need a running machine.
 ** Shutdown semantics
 smolvm machine stop is graceful: the guest agent runs a full sync, flushing
 every filesystem including virtiofs, remounts the storage read-only to
@@ -377,14 +424,16 @@ The user as whom smolvm machine exec runs commands inside a guest.
 Management operations require it to be root.
 *** Foreign state
 Any mount, volume, or file the ledger cannot prove the playbook created.
-Ignored when nothing depends on it; refused when it sits where the
-configuration wants a different mount or volume. Never removed unless
+Ignored when nothing depends on it; when it sits where the configuration
+wants a different mount or volume, a bind is refused and a volume is
+reported with VOLUME-UNPROVEN. Never removed unless
 -e bind_mounts_force_remount=true accepts it.
 *** Force remount
-Replacing a bind, or an attached volume at a target the configuration
-names, whose ownership the ledger cannot prove, authorized by re-running
-with -e bind_mounts_force_remount=true; the refusal message lists every
-affected mount and volume before anything is forced. A foreign guest-side
+Replacing a bind, or removing or replacing an attached volume at a target
+the configuration names, whose ownership the ledger cannot prove,
+authorized by re-running with -e bind_mounts_force_remount=true; for binds
+the refusal message lists every affected mount before anything is forced,
+for volumes the VOLUME-UNPROVEN message lists them. A foreign guest-side
 mount is not covered: the run prints the exact umount command instead.
 *** Guest bind: a bind mount from the share path to the target path
 *** Guest-side share path: share_target followed by the mount name
@@ -421,8 +470,8 @@ re-marked by the next run's re-mount. When the ledger cannot prove the
 bind is ours, the run halts and lists every affected host and guest
 path; re-run with -e bind_mounts_force_remount=true to accept, or
 unmount manually. A volume the configuration does not want at a target
-it names, which the ledger cannot prove, is refused the same way while
-the ledger is usable; a guest mount whose target carries a volume is not
+it names, which the ledger cannot prove, is reported with VOLUME-UNPROVEN
+and left alone; a guest mount whose target carries a volume is not
 unmounted, and the run prints the volume and the host-side recovery
 instead.
 *** After a host reboot a standalone start mounts nothing
@@ -435,16 +484,23 @@ stopping, re-run the default playbook (no --tags): it applies the volume
 changes, starts the machine, and finishes the rest. For step-by-step
 control, run --tags attach first, then --tags start.
 *** An exceeded volume budget counts hand-attached volumes too
-Remove mounts from the config, or raise max_volumes only if you know the
-machine has headroom; see smolvm issue
-[[https://github.com/smol-machines/smolvm/issues/941][#941]].
+COMPLETENESS-REFUSED means the machine already has more volumes attached
+than max_volumes; VOLUME-BUDGET-REFUSED means this run's own volume changes
+would take it past the cap, and nothing was changed. Either way, remove
+mounts from the config, remove a volume by hand with the machine stopped, or
+raise max_volumes only if you know the machine has headroom; see smolvm issue
+[[https://github.com/smol-machines/smolvm/issues/941][#941]]. smolvm enforces
+the ceiling when the machine boots, not when volumes are attached, so an
+over-cap machine attaches fine and then fails to start with
+krun_start_enter -22.
 *** An unreadable ledger disables cleanup for that run
 Fix or delete
 ~/.local/state/bind-mount-on-host-and-guest/.bind-mounts-state.yml; the
 playbook user owns it, so no sudo is needed. Deleting it loses the cleanup
-bookkeeping, and with no proof at all a volume the configuration does not
-want at a target it names is left alone instead of refused. While the file
-exists and is unreadable nothing is written either, so fix or delete it,
+bookkeeping: nothing is recorded as playbook-created until a run records the
+volumes again, so no stale cleanup happens, and a volume at a configured
+target that differs from the configuration is reported as unproven. While the
+file exists and is unreadable nothing is written either, so fix or delete it,
 then re-run to record the volumes a run changes. With the file gone, a run
 that applies a volume change writes the volume facts it recorded.
 *** The smolvm exec user must be root for the playbook to manage a guest

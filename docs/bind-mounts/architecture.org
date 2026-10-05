@@ -34,6 +34,14 @@ phase and stopped and created as not-running, refuses failed, unreachable,
 and frozen with the raw token named, and refuses any other alphabetic token
 as unknown; rows the parser had to drop are reported separately, so a
 missing machine is distinguished from an unparseable one.
+The same plugin carries two helpers the volume logic uses. path_under_any
+tests whether a path equals or lies below any of a list of prefixes, by whole
+path segments with symlinks resolved, so /home/you/share matches
+/home/you/share/old but not /home/you/share-old; a string is split on commas,
+the way an -e value is written. smolvm_project_census applies a plan's
+removes and adds to a census of volume rows the way smolvm machine update
+merges them: removes drop a matching source and target pair first, then adds
+append unless the same pair is already present, labelled ledger-proven.
 *** The share root
 share_root holds one subdirectory per mount; each is bind-mounted from its
 source on the host. Bind mode attaches it to each machine as a volume, so
@@ -68,8 +76,6 @@ profile.yml ──▶ bind_mounts role ──▶ mount --bind <src> <share_root>
         ▼  mount --bind (guest, as root)
         guest <target>
         verified: target device:inode == <share_target>/<name> device:inode
-
-login fallback: .bash_profile ─▶ sudo -n <script path>
 #+END_SRC
 ** Direct-mode data flow
 #+BEGIN_SRC text
@@ -138,10 +144,18 @@ machines:
         triple: {fstype: virtiofs, source: /mnt/share/website, root: /website}
 #+END_SRC
 *** Volumes at configured targets need ledger proof
-A volume the configuration does not want at a target it names is left
-alone while the ledger is unreadable, and refused once the ledger is
-usable and cannot prove it; a volume where the configuration wants a
-different one is refused whether or not the ledger is readable.
+The volume plan separates three cases for a volume the ledger cannot prove.
+A volume at a target where the configuration wants a different volume (the
+share target in bind mode, a mount target in direct mode) is replaced when
+the ledger proves it ours or force is set, and reported as unproven
+otherwise. A volume at any other target the configuration names (in bind
+mode, a mount target) is unproven; it is removed only with force plus a source
+under a bind_mounts_force_allow_prefixes entry, compared by whole path
+segments. A volume at a target the configuration does not name is foreign:
+never removed, listed as external, and counted against max_volumes. An
+unproven volume is reported with a VOLUME-UNPROVEN message carrying the exact
+removal command; the report does not stop the run. The plan does not consult
+whether the ledger is readable: an unreadable ledger is an empty one.
 *** Bind facts record what a run observed
 The host-bind probe, the bind this run creates, the guest mount helper and
 the re-mount after a remediation are the observations the bind entries are
@@ -172,17 +186,19 @@ still honored.
 Guest binds are unmounted deep first, host binds are unmounted, empty
 subdirectories are pruned, and volumes are removed with machine update.
 *** Foreign state is never touched
-Anything not in the ledger is left alone, except a volume the
-configuration does not want at a target it names: with a usable ledger
-that is refused with instructions and the exact removal command, and
--e bind_mounts_force_remount=true accepts its removal. A foreign mount
-sitting at a wanted target fails the run whether or not the ledger is
-readable.
+Anything not in the ledger is left alone, except a volume at a target the
+configuration names that force accepts removing or replacing. An unproven
+volume at a configured target is reported with a VOLUME-UNPROVEN message, not
+refused; a guest bind target that carries a volume is refused by the mounts
+phase. A foreign mount sitting at a wanted target fails the run whether or
+not the ledger is readable.
 *** An unreadable ledger disables cleanup for that run
-Nothing managed is removed until the ledger is fixed or deleted, and the
-volume refusal is suspended for that run: without proof the run leaves
-volumes at configured targets alone. A run that applies a volume change
-writes the volume facts it recorded.
+Nothing managed is removed until the ledger is fixed or deleted: the working
+ledger is empty for the run, so no volume is ledger-proven and volumes at
+configured targets that differ from the configuration are reported as
+unproven. Nothing is written while the file exists and is unreadable; with
+the file gone, a run that applies a volume change writes the volume facts it
+recorded.
 ** Security model
 The role installs nothing persistent in guests and holds no credentials
 there. Guest management runs through smolvm machine exec as the machine's
@@ -216,10 +232,10 @@ subdirectory are detected through the per-layer findmnt listing;
 remediation umounts top-down with an ownership check on every layer,
 hard-capped at 10 layers, and verify enforces exactly one layer after a
 successful run. A layer the playbook cannot prove it created is never
-removed, even with force. A volume at a target the configuration names is
-refused the same way, and a guest-side umount is skipped when the target
-carries a volume: the guest cannot tell a volume mount from a bind, so the
-run reports the volume and the host-side recovery instead.
+removed, even with force. A guest bind target that carries a volume is
+refused by the mounts phase, and a guest-side umount is skipped when the
+target carries a volume: the guest cannot tell a volume mount from a bind, so
+the run reports the volume and the host-side recovery instead.
 *** Stale binds are unmounted, pruned, and never force-deleted
 Ledger-stale host binds carry their owning machine. A proven-stale bind on
 a running machine is collected into the ACTION REQUIRED summary instead of
@@ -246,10 +262,11 @@ the machine stops.
 Guest mount collection and guest binds require running machines. Volume
 changes require stopped machines: the default run converges stopped
 machines by itself and halts with an ACTION REQUIRED message when a
-running machine needs volume changes; the attach tag refuses them. Only the default run and --tags attach converge a volume set (teardown
-removes the volumes the ledger records); of the partial selections, start
-refuses a pending volume change, while mounts, software, and verify never
-touch the volume set and do not refuse on one.
+running machine needs volume changes; the attach tag refuses them. Only the
+default run and --tags attach converge a volume set (teardown removes the
+volumes the ledger records); of the partial selections, start, mounts,
+software, and verify never touch the volume set and do not refuse on a
+pending change.
 *** Missing guest prerequisites fail the phase before any mutation
 Each phase preflights, per machine, only the prerequisites it needs (the
 guest tools, root exec, and for the mounts phase the configured user with
@@ -257,8 +274,19 @@ a home directory); one refusal names every missing item with plain
 guidance instead of a helper traceback. The role never installs
 prerequisites and never trusts the image blindly.
 *** Exceeded volume budget fails with counts and the issue link
-A volume the ledger cannot prove at a configured target stops the run
-before the budget check.
+The prelude counts every observed volume and refuses a machine that already
+has more than max_volumes attached (COMPLETENESS-REFUSED, naming each
+volume). The attach step then projects the volume set its apply would leave,
+with smolvm_project_census over the census, the plan's add_rows, and its
+remove_rows, and refuses with VOLUME-BUDGET-REFUSED before any machine update
+when the projection exceeds max_volumes, in check mode as well. Unproven and
+foreign volumes count like any other volume. smolvm checks nothing itself: the
+device ceiling bites at boot, with an opaque krun_start_enter -22.
+*** The end-of-run summary shows the converged set
+Every role invocation prints the volume census before the play recap, built by
+the prelude from the observed volumes. After an attach apply, the census for a
+converged machine is replaced by the projected set, so foreign volumes stay
+listed, added volumes are ledger-proven, and removed volumes are gone.
 *** Missing or non-directory sources fail before any mutation
 *** Check mode skips every mutating task and still verifies
 The host-side probes run, and so do the three verify tasks: the host bind
