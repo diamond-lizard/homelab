@@ -23,6 +23,7 @@
 #       user: you
 #       uid: 1000
 #       gid: 1000
+#       max_volumes: 10              # optional; the role default is 10
 #       mounts:
 #         - src: /home/you/projects/website
 #           target: /home/you/projects/website

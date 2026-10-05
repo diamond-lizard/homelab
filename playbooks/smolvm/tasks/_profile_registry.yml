@@ -141,8 +141,10 @@
             'uid': m.uid,
             'gid': m.gid,
             'mode': config.mode,
-            'profile_path': m.profile_path | default('/home/' ~ m.user ~ '/.bash_profile'),
-            'max_volumes': m.max_volumes | default(4)} -%}
+            'profile_path': m.profile_path | default('/home/' ~ m.user ~ '/.bash_profile')} -%}
+      {%- if m.max_volumes is defined -%}
+      {%- set _ = entry.update({'max_volumes': m.max_volumes}) -%}
+      {%- endif -%}
       {%- if config.mode == 'bind' -%}
       {%- set _ = entry.update({'share_root': share_root_resolved,
                                 'share_target': config.share_target}) -%}

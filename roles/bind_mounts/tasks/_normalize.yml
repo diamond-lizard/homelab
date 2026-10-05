@@ -35,7 +35,7 @@
             'share_root': m.share_root | default(''),
             'share_target': m.share_target | default(''),
             'profile_path': m.profile_path | default('/home/' ~ m.user ~ '/.bash_profile'),
-            'max_volumes': m.max_volumes | default(4),
+            'max_volumes': m.max_volumes | default(bind_mounts_default_max_volumes),
             'mounts': mounts | sort(attribute='target'),
           }) -%}
       {%- endif -%}

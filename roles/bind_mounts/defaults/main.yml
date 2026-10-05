@@ -11,3 +11,8 @@ bind_mounts_state_dir: "{{ lookup('env', 'HOME') }}/.local/state/bind-mount-on-h
 bind_mounts_guest_helper_dir: /tmp/010-bind-mounts-helpers
 # Ledger file name inside the state directory; the format stays 1.
 bind_mounts_ledger_file: .bind-mounts-state.yml
+# Per-machine volume ceiling used when a registry entry carries no max_volumes.
+# 10 is the lowest ceiling measured on smolvm 1.23.2 (x86_64): 11 volumes boot
+# with --net, 10 without. Hosts older than 1.23.0 boot only 4, and must set
+# max_volumes: 4 on every machine.
+bind_mounts_default_max_volumes: 10
