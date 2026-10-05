@@ -58,7 +58,7 @@
       {%- set _ = out.append('%-70s' | format('      observed:   ' ~ r.observed)) -%}
       {%- set _ = out.append('%-70s' | format('      configured: ' ~ (r.configured if r.configured is not none
             else 'no volume is wanted at this target'))) -%}
-      {%- set _ = out.append('%-70s' | format('      ledger:     ' ~ r.ledger)) -%}
+      {%- set _ = out.append('%-70s' | format('      ledger:     does not prove this volume')) -%}
       {%- set _ = out.append('%-70s' | format('')) -%}
       {%- endfor -%}
       {%- set _ = out.append('%-70s' | format('  The ledger does not prove this playbook created these')) -%}
