@@ -53,7 +53,6 @@
     # uses become; never spell a home path as ~/... where become would
     # expand it to root's home.
     profile_config_path: "{{ lookup('env', 'HOME') }}/.config/homelab/playbooks/smolvm/vars.yml"
-    bind_mounts_state_dir: "{{ lookup('env', 'HOME') }}/.local/state/bind-mount-on-host-and-guest"
   tasks:
     # Config load, validation, and translation into the role registry.
     # Runs on every selection. The include_vars precedence trap is
