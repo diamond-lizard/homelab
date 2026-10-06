@@ -2,6 +2,9 @@
 # Role interface validation: the machine registry shape.
 # Cross-field rules (bind-mode requires share fields; direct-mode share fields
 # warn) live in the prelude, not here: required_iff does not exist.
+# Every variable the role reads from defaults/main.yml is declared here, so a
+# wrong type fails at role entry. Options whose default is computed in
+# defaults/main.yml carry no `default:` here, so the value has one source.
 argument_specs:
   main:
     short_description: Bind-mount provisioning driven by a machine registry
@@ -11,6 +14,9 @@ argument_specs:
     options:
       bind_mounts_phase:
         type: str
+        description: >-
+          Which phase file runs. default runs attach, mounts, and verify in
+          order; the others run one phase on its own.
         choices:
           - default
           - attach
@@ -21,64 +27,121 @@ argument_specs:
       bind_mounts_machines:
         type: list
         required: true
+        description: >-
+          The machine registry: one entry per smolvm machine. The role never
+          creates or deletes machines; every name must already exist.
         elements: dict
         options:
           name:
             type: str
             required: true
+            description: The smolvm machine name. Unique within the registry.
           user:
             type: str
             required: true
+            description: The guest account the machine's mounts belong to.
           uid:
             type: int
             required: true
+            description: Numeric uid that owns the directories the role creates for this machine.
           gid:
             type: int
             required: true
+            description: Numeric gid that owns the directories the role creates for this machine.
           mode:
             type: str
             required: true
+            description: >-
+              bind shares one volume and bind-mounts each entry inside the
+              guest; direct attaches one volume per entry.
             choices:
               - bind
               - direct
           share_root:
             type: str
+            description: >-
+              Host directory that holds one subdirectory per mount entry.
+              Required in bind mode (checked in the prelude).
           share_target:
             type: str
+            description: >-
+              Guest path at which the share root is mounted. Required in bind
+              mode (checked in the prelude).
           profile_path:
             type: str
+            description: Accepted so older configuration files load; it has no effect.
           max_volumes:
             type: int
+            description: >-
+              Volume slots this machine may use, hand-attached volumes
+              included. Falls back to bind_mounts_default_max_volumes.
           mounts:
             type: list
             elements: dict
+            description: The host directories shared with this machine.
             options:
               src:
                 type: str
                 required: true
+                description: Host directory to share. It must exist before the run.
               target:
                 type: str
                 required: true
+                description: Absolute guest path of the mount. Unique within the machine.
               name:
                 type: str
+                description: >-
+                  Share subdirectory name in bind mode. Defaults to the last
+                  path component of src.
               readonly:
                 type: bool
+                description: >-
+                  Direct mode appends :ro to the volume; bind mode remounts
+                  the bind read-only.
               uid:
                 type: int
+                description: Overrides the machine uid for directories created for this mount.
               gid:
                 type: int
+                description: Overrides the machine gid for directories created for this mount.
       bind_mounts_limit_machines:
         type: list
         elements: str
+        description: >-
+          Restricts the run to the named machines. A name that is not in the
+          registry fails the run.
         default: []
       bind_mounts_force_remount:
         type: bool
+        description: >-
+          Accept replacing or removing binds and volumes the ledger cannot
+          prove the role created. The affected machine must be stopped.
         default: false
       bind_mounts_force_allow_prefixes:
         type: list
         elements: str
+        description: >-
+          With force, only layers and volumes at or below one of these paths
+          are accepted. Paths are compared by whole path segments.
         default: []
       bind_mounts_state_dir:
         type: str
+        description: >-
+          The playbook user's state directory. It holds the provenance
+          ledger, the run lock, and the per-run staging area.
       bind_mounts_guest_helper_dir:
         type: str
+        description: >-
+          Guest path where the per-run helper scripts are staged. It is
+          created root-owned with mode 0700 and removed when the run ends.
+      bind_mounts_ledger_file:
+        type: str
+        description: >-
+          File name of the provenance ledger inside bind_mounts_state_dir.
+          The ledger format stays version 1.
+      bind_mounts_default_max_volumes:
+        type: int
+        description: >-
+          Volume ceiling for machines whose entry has no max_volumes. 10 is
+          the lowest ceiling measured on smolvm 1.23.2; hosts older than
+          1.23.0 need max_volumes set to 4 on every machine.
