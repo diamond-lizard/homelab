@@ -1,0 +1,12 @@
+---
+# ansible-lint configuration: run `ansible-lint` from the repository root.
+# The profile and the scope live here so a bare run measures the same thing
+# every time. The excluded directories hold no Ansible source: tmp/ is
+# gitignored scratch, reference/ is gitignored operator notes, plan/ is
+# working documents.
+profile: production
+offline: true
+exclude_paths:
+  - tmp/
+  - reference/
+  - plan/
