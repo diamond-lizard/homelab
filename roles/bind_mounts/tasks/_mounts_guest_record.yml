@@ -5,17 +5,27 @@
 # legacy entry at a still-configured target is re-marked by this re-mount.
 - name: ACTION REQUIRED - guest share director(y/ies) empty (host-side bind missing)
   vars:
-    bind_mounts_box_lines:
-      - "{{ '=' * 70 }}"
-      - "{{ '%-70s' | format('  Guest share director(y/ies) are empty - the host-side bind') }}"
-      - "{{ '%-70s' | format('  feeding them is missing or points at an empty directory:') }}"
-      - "{{ '%-70s' | format('    ' ~ (bind_mounts_guest_refused.empty_share | map(attribute='machine') | join(', '))) }}"
-      - "{{ '%-70s' | format('  For each machine above, the helper refused to bind an empty') }}"
-      - "{{ '%-70s' | format('  share directory. Remedy: converge the host-side binds (re-run') }}"
-      - "{{ '%-70s' | format('  the mounts phase; stop the machine first if a stale bind is') }}"
-      - "{{ '%-70s' | format('  involved), then re-run this selection.') }}"
-      - "{{ '%-70s' | format('  Nothing else was changed by this run.') }}"
-      - "{{ '=' * 70 }}"
+    bind_mounts_box_lines: >-
+      {%- set out = ['=' * 70] -%}
+      {%- set _ = out.append('  Guest share director(y/ies) are empty - the host-side bind') -%}
+      {%- set _ = out.append('  feeding them is missing or points at an empty directory:') -%}
+      {%- set _ = out.append('') -%}
+      {%- for r in bind_mounts_guest_refused.empty_share -%}
+      {%- set _ = out.append('  ' ~ r.machine ~ ':') -%}
+      {%- set _ = out.append('      host source:  ' ~ r.src) -%}
+      {%- set _ = out.append('      guest share:  ' ~ r.share) -%}
+      {%- set _ = out.append('      guest target: ' ~ r.target) -%}
+      {%- set _ = out.append('') -%}
+      {%- endfor -%}
+      {%- set _ = out.append('  The helper refused to bind each empty guest share directory') -%}
+      {%- set _ = out.append('  above. If the host source is itself an empty directory, put') -%}
+      {%- set _ = out.append('  content in it or remove that mount from the configuration.') -%}
+      {%- set _ = out.append('  Otherwise converge the host-side binds (re-run the mounts') -%}
+      {%- set _ = out.append('  phase; stop the machine first if a stale bind is involved),') -%}
+      {%- set _ = out.append('  then re-run this selection.') -%}
+      {%- set _ = out.append('  Nothing else was changed by this run.') -%}
+      {%- set _ = out.append('=' * 70) -%}
+      {{ out }}
   ansible.builtin.fail:
     msg: "{{ bind_mounts_box_lines | action_box }}"
   when: bind_mounts_guest_refused.empty_share | length > 0

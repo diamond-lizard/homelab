@@ -55,6 +55,7 @@
       {%- set _ = out['empty_share'].append({'machine': r.bind_mounts_ensure_item.machine,
             'target': r.bind_mounts_ensure_item.target,
             'share': r.bind_mounts_ensure_item.share_path,
+            'src': r.bind_mounts_ensure_item.src,
             'stderr': r.stderr | default('') }) -%}
       {%- endif -%}
       {%- endfor -%}
