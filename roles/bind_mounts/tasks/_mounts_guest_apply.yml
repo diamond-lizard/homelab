@@ -53,9 +53,11 @@
       {%- endif -%}
       {%- if r.rc is defined and r.rc == 4 -%}
       {%- set _ = out['empty_share'].append({'machine': r.bind_mounts_ensure_item.machine,
+            'name': r.bind_mounts_ensure_item.name,
             'target': r.bind_mounts_ensure_item.target,
             'share': r.bind_mounts_ensure_item.share_path,
             'src': r.bind_mounts_ensure_item.src,
+            'host_target': r.bind_mounts_ensure_item.host_target,
             'stderr': r.stderr | default('') }) -%}
       {%- endif -%}
       {%- endfor -%}

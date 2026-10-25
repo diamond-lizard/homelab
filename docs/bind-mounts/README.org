@@ -492,6 +492,22 @@ instead.
 Host binds are runtime state and do not survive reboots, so the share
 subdirectories are empty and the guest helpers refuse to bind from them.
 Run the playbook: it re-creates the host binds and the guest mounts.
+*** A guest share directory is empty
+The guest helper refuses to bind an empty share directory, and the run
+halts with an ACTION REQUIRED box. The box lists, per mount, the machine,
+the host source, the guest share path, and the guest target, then a host
+check and a verdict. The check reads the host source with the same
+entry count the helper uses (hidden entries count) and reads the result of
+the host bind probe from the same run. A verdict is advisory and read-only:
+nothing is changed to produce it.
+- The host source is an empty directory: put content in it, or remove the
+  mount from the configuration, then re-run.
+- The host probe refused to bind the source (an unproven stack, or a stale
+  bind under a running machine): the box prints the probe's own report;
+  follow it, then re-run.
+- Anything else (the source has content, or cannot be read, or there is
+  no probe result): the box says the cause could not be determined from
+  the host side and lists the possibilities.
 *** An unproven volume at a configured target halts the run
 VOLUME-UNPROVEN-REFUSED means a volume sits at a target the configuration
 names and the ledger cannot prove this playbook attached it. The run stops

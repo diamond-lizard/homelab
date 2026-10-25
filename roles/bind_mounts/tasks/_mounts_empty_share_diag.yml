@@ -1,0 +1,55 @@
+---
+# Mounts step 6a: diagnose why each guest share directory was empty, so the
+# refusal box can name the cause instead of listing every possibility. The
+# diagnosis is advisory and read-only: it changes nothing and only reads the
+# configured host source and the host-bind probe results already collected by
+# step 3. Any source that cannot be read, any missing probe result, and any
+# state the verdict filter does not recognize lands on the generic wording.
+#
+# The source is counted with the same os.listdir rule the guest helper uses
+# (hidden entries count), through python3, which the run already requires.
+# The probe runs unprivileged. A failed listing (missing, not readable) is
+# 'unreadable', never 'empty'.
+- name: Count the entries of each empty guest share's host source
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - "import os, sys; print(len(os.listdir(sys.argv[1])))"
+      - "{{ bind_mounts_empty_row.src }}"
+  loop: "{{ bind_mounts_guest_refused.empty_share }}"
+  loop_control:
+    loop_var: bind_mounts_empty_row
+    label: "{{ bind_mounts_empty_row.machine }}:{{ bind_mounts_empty_row.target }}"
+  register: bind_mounts_empty_src
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Classify each empty guest share against the host probe
+  ansible.builtin.set_fact:
+    bind_mounts_empty_diag: >-
+      {%- set out = [] -%}
+      {%- for row in bind_mounts_guest_refused.empty_share -%}
+      {%- set listing = bind_mounts_empty_src.results[loop.index0] -%}
+      {%- set count = (listing.stdout | default('') | trim) -%}
+      {%- if listing.rc | default(1) | int != 0 or not count.isdigit() -%}
+      {%- set state = 'unreadable' -%}
+      {%- elif count | int == 0 -%}
+      {%- set state = 'empty' -%}
+      {%- else -%}
+      {%- set state = 'content' -%}
+      {%- endif -%}
+      {%- set probe = (bind_mounts_host_probe.results | default([])
+            | selectattr('item', 'defined')
+            | selectattr('item.machine', 'eq', row.machine)
+            | selectattr('item.name', 'eq', row.name)
+            | list | first | default({})) -%}
+      {%- set probe_rc = probe.rc | default(none) -%}
+      {%- set _ = out.append(row | combine({
+            'src_state': state,
+            'probe_rc': probe_rc,
+            'probe_lines': probe.stderr_lines | default([]),
+            'verdict': probe_rc | empty_share_verdict(state)})) -%}
+      {%- endfor -%}
+      {{ out }}

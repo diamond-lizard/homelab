@@ -42,6 +42,23 @@ the way an -e value is written. smolvm_project_census applies a plan's
 removes and adds to a census of volume rows the way smolvm machine update
 merges them: removes drop a matching source and target pair first, then adds
 append unless the same pair is already present, labelled ledger-proven.
+*** Refusal boxes and the empty-share diagnosis
+filter_plugins/action_box.py renders every ACTION REQUIRED box: the box lines
+are joined into one string with real newlines, because fail prints a
+list-valued msg as a Python repr that the terminal wraps mid-word.
+filter_plugins/empty_share.py holds empty_share_verdict, a pure function from
+the host bind probe's exit code and the observed state of the host source
+(empty, content, unreadable) to source-empty, host-bind-refused, unexplained,
+or unknown. When the bind is in place (probe 0 or 10) the share subdirectory
+is the same directory as the source, so an empty source explains an empty
+share; probe 3 or 4 means no bind was made. Malformed input never raises: it
+yields unknown, and the box falls back to the generic wording.
+_mounts_empty_share_diag.yml runs only when the guest ensure refused an empty
+share. It counts the entries of each host source through python3 and
+os.listdir (the helper's own rule), unprivileged, with changed_when false,
+failed_when false and check_mode false, and looks up each mount's probe
+result by machine and mount name, because the guest loop runs over a filtered
+list whose indexes differ from the probe's.
 *** The share root
 share_root holds one subdirectory per mount; each is bind-mounted from its
 source on the host. Bind mode attaches it to each machine as a volume, so
