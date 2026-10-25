@@ -495,19 +495,18 @@ Run the playbook: it re-creates the host binds and the guest mounts.
 *** A guest share directory is empty
 The guest helper refuses to bind an empty share directory, and the run
 halts with an ACTION REQUIRED box. The box lists, per mount, the machine,
-the host source, the guest share path, and the guest target, then a host
-check and a verdict. The check reads the host source with the same
-entry count the helper uses (hidden entries count) and reads the result of
-the host bind probe from the same run. A verdict is advisory and read-only:
-nothing is changed to produce it.
-- The host source is an empty directory: put content in it, or remove the
-  mount from the configuration, then re-run.
-- The host probe refused to bind the source (an unproven stack, or a stale
-  bind under a running machine): the box prints the probe's own report;
-  follow it, then re-run.
-- Anything else (the source has content, or cannot be read, or there is
-  no probe result): the box says the cause could not be determined from
-  the host side and lists the possibilities.
+the host source, the guest share path, and the guest target, then whether
+the host source has files (hidden files count, as they do for the helper),
+the state of the host bind, and the cause with the fix. The diagnosis is
+advisory and read-only: nothing is changed to produce it.
+- The host source has no files: put content in it, or remove the mount
+  from the configuration, then re-run.
+- The playbook refused to make the host bind (an unproven stack, or a
+  stale bind under a running machine): the box prints the refusal's own
+  explanation; follow it, then re-run.
+- Anything else (the source has files, or cannot be read, or the host
+  bind state is unknown): the box says the cause could not be determined
+  from the host side and lists the possibilities.
 *** An unproven volume at a configured target halts the run
 VOLUME-UNPROVEN-REFUSED means a volume sits at a target the configuration
 names and the ledger cannot prove this playbook attached it. The run stops

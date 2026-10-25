@@ -16,37 +16,43 @@
       {%- set _ = out.append('') -%}
       {%- set undetermined = [] -%}
       {%- for r in bind_mounts_empty_diag -%}
+      {%- set rc = r.probe_rc | int(-1) -%}
       {%- set _ = out.append('  ' ~ r.machine ~ ':') -%}
-      {%- set _ = out.append('      host source:  ' ~ r.src) -%}
-      {%- set _ = out.append('      guest share:  ' ~ r.share) -%}
-      {%- set _ = out.append('      guest target: ' ~ r.target) -%}
-      {%- set _ = out.append('      host check:   ' ~ ('source is empty' if r.src_state == 'empty'
-            else 'source has content' if r.src_state == 'content'
-            else 'source could not be read')
-            ~ '; host bind probe: ' ~ ('rc ' ~ r.probe_rc if r.probe_rc is not none else 'no result')) -%}
+      {%- set _ = out.append('      host source:   ' ~ r.src) -%}
+      {%- set _ = out.append('      guest share:   ' ~ r.share) -%}
+      {%- set _ = out.append('      guest target:  ' ~ r.target) -%}
+      {%- set _ = out.append('      source files:  ' ~ ('none' if r.src_state == 'empty'
+            else 'present' if r.src_state == 'content'
+            else 'could not be read')) -%}
+      {%- set _ = out.append('      host bind:     ' ~ ('in place' if rc == 0
+            else 'created by this run' if rc == 10
+            else 'not made: the playbook refused to bind the source' if rc in [3, 4]
+            else 'unknown')) -%}
       {%- if r.verdict == 'source-empty' -%}
-      {%- set _ = out.append('      verdict:      the host source is an empty directory. Put content in it,') -%}
-      {%- set _ = out.append('                    or remove this mount from the configuration.') -%}
+      {%- set _ = out.append('      cause:         the host source directory is empty.') -%}
+      {%- set _ = out.append('      fix:           put content in it, or remove this mount from the') -%}
+      {%- set _ = out.append('                     configuration.') -%}
       {%- elif r.verdict == 'host-bind-refused' -%}
-      {%- set _ = out.append('      verdict:      the host probe refused to bind the source, so the share') -%}
-      {%- set _ = out.append('                    stays empty. The probe reported:') -%}
+      {%- set _ = out.append('      cause:         the share stays empty because the playbook refused to') -%}
+      {%- set _ = out.append('                     bind the source. Its explanation:') -%}
       {%- for line in r.probe_lines -%}
-      {%- set _ = out.append('                      ' ~ line) -%}
+      {%- set _ = out.append('                       ' ~ line) -%}
       {%- endfor -%}
+      {%- set _ = out.append('      fix:           follow that explanation.') -%}
       {%- else -%}
-      {%- set _ = out.append('      verdict:      the cause could not be determined from the host side.') -%}
+      {%- set _ = out.append('      cause:         could not be determined from the host side.') -%}
       {%- set _ = undetermined.append(r.machine) -%}
       {%- endif -%}
       {%- set _ = out.append('') -%}
       {%- endfor -%}
       {%- if undetermined | length > 0 -%}
-      {%- set _ = out.append('  Where the cause could not be determined: the host-side bind is') -%}
+      {%- set _ = out.append('  Where the cause could not be determined: the host bind is') -%}
       {%- set _ = out.append('  missing, or the host source is an empty directory. Put content') -%}
       {%- set _ = out.append('  in an empty source or remove that mount from the configuration;') -%}
-      {%- set _ = out.append('  otherwise converge the host-side binds (re-run the mounts') -%}
+      {%- set _ = out.append('  otherwise converge the host binds (re-run the mounts') -%}
       {%- set _ = out.append('  phase; stop the machine first if a stale bind is involved).') -%}
       {%- endif -%}
-      {%- set _ = out.append('  Then re-run this selection.') -%}
+      {%- set _ = out.append('  Then re-run the playbook with the same options.') -%}
       {%- set _ = out.append('  Nothing else was changed by this run.') -%}
       {%- set _ = out.append('=' * 70) -%}
       {{ out }}
