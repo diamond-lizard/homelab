@@ -48,8 +48,8 @@
 
 - name: >-
       ACTION REQUIRED: volume changes are pending on running machines
-  ansible.builtin.fail:
-    msg:
+  vars:
+    bind_mounts_box_lines:
       - "{{ '=' * 70 }}"
       - "{{ '%-70s' | format('  Machine(s) running with pending volume changes:') }}"
       - "{{ '%-70s' | format('') }}"
@@ -65,4 +65,6 @@
       - "{{ '%-70s' | format('  clears its guest bind lanes. Nothing else was changed') }}"
       - "{{ '%-70s' | format('  by this run.') }}"
       - "{{ '=' * 70 }}"
+  ansible.builtin.fail:
+    msg: "{{ bind_mounts_box_lines | action_box }}"
   when: bind_mounts_pending_running | length > 0

@@ -15,8 +15,8 @@
   when: bind_mounts_notrunning_machines | length > 0
 
 - name: Render the verify failures as an ACTION REQUIRED box
-  ansible.builtin.fail:
-    msg:
+  vars:
+    bind_mounts_box_lines:
       - "{{ '=' * 70 }}"
       - "{{ '%-70s' | format('  Verify failed for the following mounts:') }}"
       - "{{ '%-70s' | format('') }}"
@@ -28,6 +28,8 @@
       - "{{ '%-70s' | format('  Re-converge the machine with the mounts phase, then re-run') }}"
       - "{{ '%-70s' | format('  the verify phase.') }}"
       - "{{ '=' * 70 }}"
+  ansible.builtin.fail:
+    msg: "{{ bind_mounts_box_lines | action_box }}"
   loop: "{{ (bind_mounts_host_verify_failed | default([]))
             + (bind_mounts_guest_verify_failed | default([])) }}"
   loop_control:

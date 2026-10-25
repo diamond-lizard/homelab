@@ -32,5 +32,5 @@
       {%- set _ = out.append('=' * 70) -%}
       {{ out }}
   ansible.builtin.fail:
-    msg: "{{ bind_mounts_replaced_box }}"
+    msg: "{{ bind_mounts_replaced_box | action_box }}"
   when: bind_mounts_stale_refused | length > 0

@@ -88,7 +88,7 @@
       {%- set _ = out.append('=' * 70) -%}
       {{ out }}
   ansible.builtin.fail:
-    msg: "{{ bind_mounts_unproven_box }}"
+    msg: "{{ bind_mounts_unproven_box | action_box }}"
   when:
     - bind_mounts_unproven_refused | length > 0
     - bind_mounts_phase in ['default', 'attach', 'mounts', 'verify']

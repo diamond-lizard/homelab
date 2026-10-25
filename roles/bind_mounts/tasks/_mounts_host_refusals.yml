@@ -11,8 +11,8 @@
          | map(attribute='item') | list }}
 
 - name: ACTION REQUIRED - stale mounts need a stopped machine
-  ansible.builtin.fail:
-    msg:
+  vars:
+    bind_mounts_box_lines:
       - "{{ '%-70s' | format('=' * 69) }}"
       - "{{ '%-70s' | format('  Machine(s) whose stale mounts need the machine stopped:') }}"
       - "{{ '%-70s' | format('') }}"
@@ -23,6 +23,8 @@
       - "{{ '%-70s' | format('      smolvm machine stop --name <machine-name>') }}"
       - "{{ '%-70s' | format('  then re-run. Nothing else was changed by this run.') }}"
       - "{{ '%-70s' | format('=' * 69) }}"
+  ansible.builtin.fail:
+    msg: "{{ bind_mounts_box_lines | action_box }}"
   when: bind_mounts_probe_stop | length > 0
 
 - name: Collect the unproven stacks the probe refused
@@ -78,5 +80,5 @@
       {%- set _ = out.append('=' * 69) -%}
       {{ out }}
   ansible.builtin.fail:
-    msg: "{{ bind_mounts_refused_box }}"
+    msg: "{{ bind_mounts_refused_box | action_box }}"
   when: bind_mounts_probe_refused | length > 0

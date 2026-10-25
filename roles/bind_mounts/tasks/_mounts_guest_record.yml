@@ -4,8 +4,8 @@
 # lane at the observation site, with the helper's TRIPLE lines recorded so a
 # legacy entry at a still-configured target is re-marked by this re-mount.
 - name: ACTION REQUIRED - guest share director(y/ies) empty (host-side bind missing)
-  ansible.builtin.fail:
-    msg:
+  vars:
+    bind_mounts_box_lines:
       - "{{ '=' * 70 }}"
       - "{{ '%-70s' | format('  Guest share director(y/ies) are empty - the host-side bind') }}"
       - "{{ '%-70s' | format('  feeding them is missing or points at an empty directory:') }}"
@@ -16,11 +16,13 @@
       - "{{ '%-70s' | format('  involved), then re-run this selection.') }}"
       - "{{ '%-70s' | format('  Nothing else was changed by this run.') }}"
       - "{{ '=' * 70 }}"
+  ansible.builtin.fail:
+    msg: "{{ bind_mounts_box_lines | action_box }}"
   when: bind_mounts_guest_refused.empty_share | length > 0
 
 - name: ACTION REQUIRED - guest bind target(s) carrying a machine volume
-  ansible.builtin.fail:
-    msg:
+  vars:
+    bind_mounts_box_lines:
       - "{{ '=' * 70 }}"
       - "{{ '%-70s' | format('  Guest bind target(s) carrying an smolvm volume:') }}"
       - "{{ '%-70s' | format('    ' ~ (bind_mounts_guest_refused.volume | map(attribute='machine') | join(', '))) }}"
@@ -31,11 +33,13 @@
       - "{{ '%-70s' | format('      smolvm machine update --name <machine> --remove-volume=<src>:<tgt>') }}"
       - "{{ '%-70s' | format('  Nothing else was changed by this run.') }}"
       - "{{ '=' * 70 }}"
+  ansible.builtin.fail:
+    msg: "{{ bind_mounts_box_lines | action_box }}"
   when: bind_mounts_guest_refused.volume | length > 0
 
 - name: ACTION REQUIRED - guest mount(s) the ledger cannot prove
-  ansible.builtin.fail:
-    msg:
+  vars:
+    bind_mounts_box_lines:
       - "{{ '=' * 70 }}"
       - "{{ '%-70s' | format('  Guest mount(s) the ledger cannot prove:') }}"
       - "{{ '%-70s' | format('    ' ~ (bind_mounts_guest_refused.unproven | map(attribute='machine') | join(', '))) }}"
@@ -45,6 +49,8 @@
       - "{{ '%-70s' | format('') }}"
       - "{{ '%-70s' | format('  Nothing else was changed by this run.') }}"
       - "{{ '=' * 70 }}"
+  ansible.builtin.fail:
+    msg: "{{ bind_mounts_box_lines | action_box }}"
   when: bind_mounts_guest_refused.unproven | length > 0
 
 - name: Collect the observed guest bind rows with their triples

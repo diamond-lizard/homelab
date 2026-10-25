@@ -5,8 +5,8 @@
 # guest refusal site; this file renders the ACTION REQUIRED box naming the
 # start route and fails the run.
 - name: ACTION REQUIRED - guest bind mounts need a running machine
-  ansible.builtin.fail:
-    msg:
+  vars:
+    bind_mounts_box_lines:
       - "{{ '=' * 70 }}"
       - "{{ '%-70s' | format('  Machine(s) stopped while guest bind mounts were requested:') }}"
       - "{{ '%-70s' | format('') }}"
@@ -18,4 +18,6 @@
       - "{{ '%-70s' | format('  ansible-playbook playbooks/smolvm/profile.yml --tags start -K') }}"
       - "{{ '%-70s' | format('') }}"
       - "{{ '=' * 70 }}"
+  ansible.builtin.fail:
+    msg: "{{ bind_mounts_box_lines | action_box }}"
   when: bind_mounts_stopped_with_binds | length > 0
