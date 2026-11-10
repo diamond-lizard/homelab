@@ -89,7 +89,7 @@
             ~ (bind_mounts_probe_prefixes | join(','))) -%}
       {%- endif -%}
       {%- set _ = out.append('') -%}
-      {%- set _ = out.append('  Nothing was mounted, unmounted or otherwise changed.') -%}
+      {%- set _ = out.append('  Earlier steps of this run may already have changed state.') -%}
       {%- set _ = out.append('=' * 69) -%}
       {{ out }}
   ansible.builtin.fail:

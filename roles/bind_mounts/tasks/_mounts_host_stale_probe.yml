@@ -28,7 +28,8 @@
       source '{{ (bind_mounts_host_mounts.get(bind_mounts_stale_item.target, {})
       | dict2items | map(attribute='value.source') | first) | default('unknown') }}'.
       Unmount it manually, then re-run. This role never unmounts mounts it
-      cannot prove it created; nothing was changed.
+      cannot prove it created. Earlier steps of this run may already have
+      changed state.
   loop: "{{ bind_mounts_stale_host }}"
   loop_control:
     extended: true

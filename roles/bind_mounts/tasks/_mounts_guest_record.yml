@@ -53,7 +53,7 @@
       {%- set _ = out.append('  phase; stop the machine first if a stale bind is involved).') -%}
       {%- endif -%}
       {%- set _ = out.append('  Then re-run the playbook with the same options.') -%}
-      {%- set _ = out.append('  Nothing else was changed by this run.') -%}
+      {%- set _ = out.append('  Earlier steps of this run may already have changed state.') -%}
       {%- set _ = out.append('=' * 70) -%}
       {{ out }}
   ansible.builtin.fail:
@@ -67,11 +67,11 @@
       - "{{ '%-70s' | format('  Guest bind target(s) carrying an smolvm volume:') }}"
       - "{{ '%-70s' | format('    ' ~ (bind_mounts_guest_refused.volume | map(attribute='machine') | join(', '))) }}"
       - "{{ '%-70s' | format('  The helper refused to bind over a volume, and this run did') }}"
-      - "{{ '%-70s' | format('  not unmount anything inside the guest. Never umount these') }}"
-      - "{{ '%-70s' | format('  targets inside the guest. Recovery, with the machine stopped:') }}"
+      - "{{ '%-70s' | format('  not unmount these targets. Never umount these targets inside') }}"
+      - "{{ '%-70s' | format('  the guest. Recovery, with the machine stopped:') }}"
       - "{{ '%-70s' | format('      smolvm machine stop --name <machine-name>') }}"
-      - "{{ '%-70s' | format('      smolvm machine update --name <machine> --remove-volume=<src>:<tgt>') }}"
-      - "{{ '%-70s' | format('  Nothing else was changed by this run.') }}"
+      - "{{ '%-70s' | format('      smolvm machine update --name <name> --remove-volume=<src>:<tgt>') }}"
+      - "{{ '%-70s' | format('  Earlier steps of this run may already have changed state.') }}"
       - "{{ '=' * 70 }}"
   ansible.builtin.fail:
     msg: "{{ bind_mounts_box_lines | action_box }}"
@@ -87,7 +87,7 @@
       - "{{ '%-70s' | format('') }}"
       - "{{ '%-70s' | format('      smolvm machine exec --name <machine> -- umount <target>') }}"
       - "{{ '%-70s' | format('') }}"
-      - "{{ '%-70s' | format('  Nothing else was changed by this run.') }}"
+      - "{{ '%-70s' | format('  Earlier steps of this run may already have changed state.') }}"
       - "{{ '=' * 70 }}"
   ansible.builtin.fail:
     msg: "{{ bind_mounts_box_lines | action_box }}"

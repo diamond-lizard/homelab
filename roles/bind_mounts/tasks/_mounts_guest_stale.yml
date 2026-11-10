@@ -48,7 +48,7 @@
       - "{{ '%-70s' | format('  the machine stopped (volume changes need one):') }}"
       - "{{ '%-70s' | format('      smolvm machine stop --name <machine-name>') }}"
       - "{{ '%-70s' | format('      smolvm machine update --name <machine> --remove-volume=<src>:<tgt>') }}"
-      - "{{ '%-70s' | format('  Nothing else was changed by this run.') }}"
+      - "{{ '%-70s' | format('  Earlier steps of this run may already have changed state.') }}"
   when: bind_mounts_kept_rows | length > 0
 
 - name: Note the legacy-format stale guest bind entries (reported, never removed)
