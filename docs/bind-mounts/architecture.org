@@ -239,6 +239,9 @@ there. Guest management runs through smolvm machine exec as the machine's
 configured user (root by the guest contract), so no guest-side passwordless
 sudo is involved; host-side bind mounts use Ansible become with password
 sudo, while the ledger is written as the invoking user without become.
+The one script the role runs as root on the host is the probe's apply form
+(host-bind-probe.py with the mode apply, started as python3 -B); it
+umounts only layers the ledger proves or an explicit force names.
 The one-time escalation surface the legacy design carried (a NOPASSWD
 sudoers rule scoped to a root-owned script copy, plus a profile hook
 invoking it) is decommissioned; a guest still holding any of those is
@@ -251,10 +254,13 @@ is stopped. A running machine halts the run with an ACTION REQUIRED
 message first: libkrun keeps host-side file descriptors open on the share
 bind for the lifetime of the VM, so the old bind cannot be unmounted and
 even -e bind_mounts_force_remount=true must wait for a stopped machine.
-Today the host-bind probe's own umount runs without root, so replacing a
-host bind whose source changed fails on a stopped machine (README,
-Replacing a host bind with a different source fails); removals and
-renames unmount through the ledger-stale cleanup, which runs with become.
+The host-bind probe only inspects and never unmounts. When a removable
+stack must be cleared it exits 11 (removal needed) and a become task runs
+the probe's apply form, which re-checks every layer's ownership right
+before each umount (up to 10 layers): a changed source, a forced remount
+and a stacked bind converge this way on a stopped machine. Removals and
+renames unmount through the ledger-stale cleanup, which also runs with
+become.
 A bind the kernel marks //deleted — the source directory was unlinked
 while the bind stayed mounted — is still playbook-owned when the path
 minus that marker matches the configured or ledger-recorded source; it remediates like any proven-stale bind, without force. A guest layer is
@@ -295,8 +301,8 @@ Rename convergence follows the same stopped-machine rule: the old share
 subdirectory's host bind is ledger-stale, so after the machine stops the
 mounts selection unmounts it, prunes the emptied directory and binds the
 new name, and the next default run mounts the guest bind from the new
-share path. A changed share source for the same name is not converged
-yet (see above): the probe's umount runs without root.
+share path. A changed share source for the same name converges the same
+way: the probe asks for the removal and its apply form unmounts the old bind.
 *** An unreadable ledger disables cleanup for that run
 *** Stopped versus running machines gate different phases
 Guest mount collection and guest binds require running machines. Volume
