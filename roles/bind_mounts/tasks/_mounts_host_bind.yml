@@ -1,8 +1,8 @@
 ---
 # Mounts step 3b: the bind changes the probe licensed. A drifted bind is
-# remounted with the configured ro state; a remediation answer (rc 10) gets
-# the fresh bind, and a fresh readonly bind is remounted ro. Check mode runs
-# neither.
+# remounted with the configured ro state; an answer of rc 10 (nothing mounted)
+# or rc 11 (the clear task has removed the old bind) gets the fresh bind, and
+# a fresh readonly bind is remounted ro. Check mode runs neither.
 - name: Remount host binds whose readonly state drifted
   ansible.builtin.command:
     argv:
@@ -39,7 +39,7 @@
   register: bind_mounts_host_bind
   changed_when: bind_mounts_host_bind.rc | default(1) | int == 0
   when: >-
-    bind_mounts_host_probe.results[ansible_loop.index0].rc | default(10) | int == 10
+    bind_mounts_host_probe.results[ansible_loop.index0].rc | default(10) | int in [10, 11]
     and not ansible_check_mode
 
 - name: Remount the freshly bound readonly host binds
@@ -58,5 +58,5 @@
   changed_when: true
   when: >-
     bind_mounts_ro_item.readonly
-    and bind_mounts_host_probe.results[ansible_loop.index0].rc | default(10) | int == 10
+    and bind_mounts_host_probe.results[ansible_loop.index0].rc | default(10) | int in [10, 11]
     and not ansible_check_mode

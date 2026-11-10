@@ -5,8 +5,13 @@ Decides whether the live mount at one share subdirectory is this playbook's
 own and what to do about it: 0 = bound from the configured source (or the
 top layer is and the stack collapses on a stopped machine); 3 = the stack
 holds layers the ledger cannot prove ours; 4 = stale or foreign and the
-machine is running; 10 = REMEDIATE, bind the configured source. stdout:
-LAYERS:, LAYER-SRC:, RO-STATE:, ALLOW-PREFIX:; stderr carries refusals.
+machine is running; 10 = nothing is mounted (or, in apply mode, the layers
+were cleared): bind the configured source; 11 = plan mode only: every layer
+is removable and the apply form must clear them first; 2 = usage error.
+The last argument is the mode: plan only inspects and never unmounts;
+apply re-checks every layer right before each umount (run it as root).
+stdout: LAYERS:, LAYER-SRC:, RO-STATE:, ALLOW-PREFIX:, REMOVE-NEEDED:,
+REMEDIATED:; stderr carries refusals.
 """
 import json
 import os
@@ -38,11 +43,16 @@ def refuse_stack(tgt, src, layers, bad, force_named):
 
 
 def main():
-    src, tgt, recorded, machine, state, force, share_root, allow_json = sys.argv[1:9]
+    src, tgt, recorded, machine, state, force, share_root, allow_json, mode = sys.argv[1:10]
+    if mode not in ("plan", "apply"):
+        print(f"usage error: mode must be plan or apply, got {mode!r}", file=sys.stderr)
+        return 2
     try:
         allow_raw = json.loads(allow_json or "[]")
     except ValueError:
         allow_raw = [p for p in (allow_json or "").strip().strip('[]').split(',') if p.strip()]
+    if isinstance(allow_raw, str):
+        allow_raw = [p for p in allow_raw.split(',') if p.strip()]
     labels = (src, recorded, share_root)
     layers = mount_lines(tgt)
     if not layers:
@@ -76,6 +86,8 @@ def main():
         wanted = [l for l in layers if not layer_provable(l, src, recorded, share_root)]
         return refuse_stack(tgt, src, layers, wanted,
                             ",".join('/' + subpath(l) for l in wanted))
+    why = ("collapsed stack" if matched else "the source directory was deleted" if deleted
+           else "proven ours by ledger" if ours else "forced by user")
     for _ in range(10):
         layers = mount_lines(tgt)
         if not layers:
@@ -84,12 +96,13 @@ def main():
         if bad:
             return refuse_stack(tgt, src, layers, bad,
                                 ",".join('/' + subpath(l) for l in bad))
+        if mode == "plan":
+            print(f"REMOVE-NEEDED: {tgt} has {len(layers)} layer(s) to clear ({why}); re-binding from {src} follows")
+            return 11
         subprocess.run(["umount", tgt], check=True)
     if mount_lines(tgt):
         print(f"REFUSED: {tgt} is still stacked after 10 attempts; stopping", file=sys.stderr)
         return 3
-    why = ("collapsed stack" if matched else "the source directory was deleted" if deleted
-           else "proven ours by ledger" if ours else "forced by user")
     print(f"REMEDIATED: stale bind at {tgt} cleared ({why}); re-binding from {src}")
     return 10
 
