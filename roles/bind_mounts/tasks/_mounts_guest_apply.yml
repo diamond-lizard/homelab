@@ -41,12 +41,12 @@
       {%- if r.rc is defined and r.rc == 3 -%}
       {%- set vols = bind_mounts_sections.get(r.bind_mounts_ensure_item.machine, {}).mounts | default([]) -%}
       {%- if r.bind_mounts_ensure_item.target in (vols | map(attribute='target') | list) -%}
-      {%- set _ = out['volume'].append(r.item) -%}
+      {%- set _ = out['volume'].append(r.bind_mounts_ensure_item) -%}
       {%- elif (bind_mounts_ledger.machines | default({})).get(r.bind_mounts_ensure_item.machine, {})
             .get('guest_binds', [])
             | selectattr('target', 'eq', r.bind_mounts_ensure_item.target)
             | selectattr('observed', 'defined') | list | length == 0 -%}
-      {%- set _ = out['unproven'].append(r.item) -%}
+      {%- set _ = out['unproven'].append(r.bind_mounts_ensure_item) -%}
       {%- else -%}
       {%- set _ = out['proven'].append(r.item) -%}
       {%- endif -%}
