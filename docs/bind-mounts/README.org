@@ -130,18 +130,22 @@ unchanged.
 Changing the target path, the share name, the source directory, or the
 readonly setting converges automatically. Whether the guest can stay
 running depends on the change.
-**** Bind mode: readonly flips apply live; source changes need a stopped guest
-A readonly flip is remounted in place while the machine runs. A source
-directory change cannot be applied live: libkrun pins the old host bind
-for as long as the machine runs, so the run halts with an ACTION REQUIRED
-message naming the machine; stop it and re-run, and the stale bind is
-unmounted and re-bound from the new source before the machine starts. A
-rename (the share name changes while the source and target stay)
-converges the same way through the ledger-stale cleanup, with the same
-stopped-machine rule. Stacked binds at a share subdirectory (left by an
-interrupted remediation or by manual stacking) are detected and collapsed
-on the next run while the machine is stopped, and verify requires exactly
-one layer after a successful run.
+**** Bind mode: readonly flips apply live; renames and source changes need a stopped guest
+A readonly flip is remounted in place while the machine runs. A rename
+(the share name changes while the source and target stay) cannot be
+applied live: libkrun pins the old host bind for as long as the machine
+runs, so the run halts with an ACTION REQUIRED message naming the
+machine. Stop the machine, run --tags mounts (the default run would start
+it again before its mounts phase), then run the default playbook. The
+mounts run unmounts the old host bind, prunes its emptied share
+subdirectory, and binds the new name; it ends on the ACTION REQUIRED box
+for guest binds on a stopped machine, which is expected. A source
+directory change for the same share name is not converged yet; see
+Replacing a host bind with a different source fails under
+Troubleshooting. Stacked binds at a share subdirectory (left by an
+interrupted remediation or by manual stacking) are detected, and
+collapsing them reaches the same umount; verify requires exactly one
+layer after a successful run.
 **** Direct mode: the guest must be stopped for the volume re-creation
 A source or readonly change removes and re-adds the volume, so the
 stopped-machine rule for volume changes applies.
@@ -168,6 +172,13 @@ refused even when force is set.
 #+BEGIN_SRC
 ansible-playbook playbooks/smolvm/profile.yml -i inventory -K -e bind_mounts_force_remount=true -e bind_mounts_force_allow_prefixes=/home/you/share-old
 #+END_SRC
+
+For a host bind the forced run needs the machine stopped, so it must be
+the mounts selection (add --tags mounts): a default run starts the
+machine before its mounts phase, and the running machine refuses first.
+Replacing a host bind, forced or not, reaches the umount that currently
+fails; see Replacing a host bind with a different source fails under
+Troubleshooting. Volumes are not affected.
 
 Volumes follow the same switch with two differences. A volume at a target
 where the configuration wants a different volume (the share target in bind
@@ -277,6 +288,11 @@ regardless of machine state; the guest binds need a running guest and
 refuse a stopped machine with the start route named; stale-host-bind
 remediation refuses a running machine, so stop first. Does not change
 the volume set; a pending volume change no longer stops this selection.
+To clear stale host binds (a removed or renamed mount), stop the machine
+and run this selection: it unmounts them and prunes their emptied share
+subdirectories, then ends on the ACTION REQUIRED box for guest binds on a
+stopped machine. That box is expected here; run the default playbook next
+to bind and verify.
 *** software
 Installs the configured packages on running machines. A machine that is
 not running is skipped with a note; an empty packages list disables the
@@ -469,9 +485,11 @@ root, so no guest can see it.
 ** Troubleshooting
 *** A missing config fails fast with instructions
 *** A target mounted with a different source is remediated or refused
-A proven-stale bind is unmounted and re-bound from the configured source
-while the machine is stopped; a running machine halts the run with an
-ACTION REQUIRED message first (libkrun pins the old bind). A bind whose
+A proven-stale bind is meant to be unmounted and re-bound from the
+configured source while the machine is stopped; a running machine halts
+the run with an ACTION REQUIRED message first (libkrun pins the old
+bind). Today the stopped-machine replacement fails for the normal user
+(see the next entry). A bind whose
 source directory was deleted while it stayed mounted - the kernel marks
 its mount root //deleted - is treated as ours when the path minus that
 marker matches the configured or recorded source, and remediates on a
@@ -488,6 +506,20 @@ ledger cannot prove, halts the run with VOLUME-UNPROVEN-REFUSED and is left
 alone; a guest mount whose target carries a volume is not
 unmounted, and the run prints the volume and the host-side recovery
 instead.
+*** Replacing a host bind with a different source fails (known limitation)
+The replacement of a proven-stale host bind whose source changed, of a
+forced host bind, and of a stacked host bind is meant to happen on a
+stopped machine through the host-bind probe, but the probe runs umount as
+the invoking user. The host refuses it ("umount: ...: must be superuser
+to unmount."), the probe stops with a CalledProcessError traceback, and
+the run fails with the old bind still in place. A check-mode run on a
+stopped machine fails the same way, because the probe runs in check mode
+too. Measured on Void Linux with util-linux 2.41.4 and exercised on a
+scratch machine for a changed source; the forced and stacked cases reach
+the same umount in the code. Until ISSUE-1 is fixed, restore the previous
+source in the configuration and re-run. Removals and renames are not
+affected: they unmount through the ledger-stale cleanup, which runs as
+root.
 *** After a host reboot a standalone start mounts nothing
 Host binds are runtime state and do not survive reboots, so the share
 subdirectories are empty and the guest helpers refuse to bind from them.
@@ -530,6 +562,10 @@ The playbook never stops a machine with live sessions on its own. After
 stopping, re-run the default playbook (no --tags): it applies the volume
 changes, starts the machine, and finishes the rest. For step-by-step
 control, run --tags attach first, then --tags start.
+Stale host binds are the exception: the default run starts the machine
+before its mounts phase, which cannot unmount them while it runs. After
+stopping, run --tags mounts first, then the default playbook (see the
+mounts selection under Selection reference).
 *** An exceeded volume budget counts hand-attached volumes too
 COMPLETENESS-REFUSED means the machine already has more volumes attached
 than max_volumes; VOLUME-BUDGET-REFUSED means this run's own volume changes
