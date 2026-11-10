@@ -4,8 +4,9 @@
 # does not match its configured source refuses behind the stop-first box; an
 # unproven stack refuses with the layered box naming the machine, the
 # target, every layer, the exact force switch, and the manual umount
-# command. The refusals mutate nothing themselves; steps 1-7 of the run
-# have already executed.
+# command. The refusals mutate nothing themselves; the share tree, host
+# binds and guest work of this phase have already executed, and the
+# stopped-machine box (_mounts_stopped.yml) runs after this file.
 - name: Collect the stale binds that need a stopped machine
   ansible.builtin.set_fact:
     bind_mounts_probe_stop: >-
