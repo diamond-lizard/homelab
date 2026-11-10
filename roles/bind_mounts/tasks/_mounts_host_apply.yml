@@ -1,12 +1,15 @@
 ---
 # Mounts step 3: the host-bind identity probe gates every bind change. The
-# probe keeps the live device:inode re-check and the //deleted exception; it
-# remounts readonly drift and re-binds what it proved ours on a not-running
-# machine, honoring the force switch; it refuses unproven stacks (rc 3) and
-# stale binds on running machines (rc 4), and asks for remediation (rc 10).
-# Check mode runs the probe and the refusals and mounts nothing.
-# The probe itself is a read-only findmnt/stat inspection and runs
-# unprivileged (root is reserved for the mount/umount/remount tasks).
+# probe keeps the live device:inode re-check and the //deleted exception and
+# only inspects (findmnt/stat, unprivileged, never unmounts): exit 0 matched,
+# 3 an unproven stack it refuses (the force switch accepts named layers),
+# 4 a stale bind under a running machine, 10 nothing mounted, 11 removal
+# needed (a not-running machine whose bind the ledger proves ours, the
+# //deleted exception, or forced layers). The clear task then runs the
+# probe's apply form as root, which re-checks every layer and umounts it,
+# and the bind tasks re-bind the configured source; readonly drift is
+# remounted in place. Check mode runs the probe and the refusals, skips the
+# clear task and mounts nothing.
 - name: Probe host bind identity (source vs share subdirectory)
   vars:
     bind_mounts_probe_mount: "{{ bind_mounts_mounts_flat[ansible_loop.index0] }}"
@@ -28,6 +31,7 @@
       - "{{ bind_mounts_force_remount | bool | string | lower }}"
       - "{{ bind_mounts_probe_mount.host_root }}"
       - "{{ bind_mounts_force_allow_prefixes | to_json }}"
+      - plan
   loop: "{{ bind_mounts_mounts_flat }}"
   loop_control:
     extended: true
@@ -38,7 +42,47 @@
   # In a loop the register holds the current item's own result, so the exit
   # code is read from .rc; the finished list (.results) does not exist yet.
   failed_when: >-
-    bind_mounts_host_probe.rc | default(10) not in [0, 3, 4, 10]
+    bind_mounts_host_probe.rc | default(10) not in [0, 3, 4, 10, 11]
+
+# Clear what the probe asked to remove (rc 11). The apply form of the probe
+# re-checks every layer's ownership right before each umount, so root only
+# removes what the plan proved removable; a refusal or a failed umount fails
+# the run. Check mode skips this task: nothing is unmounted. The arguments
+# are the probe's own plus the mode.
+- name: Clear the proven-stale host binds the probe asked to remove
+  vars:
+    bind_mounts_probe_mount: "{{ bind_mounts_mounts_flat[ansible_loop.index0] }}"
+    bind_mounts_probe_recorded: >-
+      {{ (bind_mounts_ledger.machines | default({})).get(bind_mounts_probe_mount.machine, {})
+         .get('host_binds', [])
+         | selectattr('target', 'eq', bind_mounts_probe_mount.host_target)
+         | selectattr('observed', 'defined')
+         | map(attribute='source') | first | default('') }}
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -B
+      - "{{ role_path }}/files/host-bind-probe.py"
+      - "{{ bind_mounts_probe_mount.src }}"
+      - "{{ bind_mounts_probe_mount.host_target }}"
+      - "{{ bind_mounts_probe_recorded }}"
+      - "{{ bind_mounts_probe_mount.machine }}"
+      - "{{ bind_mounts_mounts_gate[bind_mounts_probe_mount.machine].state }}"
+      - "{{ bind_mounts_force_remount | bool | string | lower }}"
+      - "{{ bind_mounts_probe_mount.host_root }}"
+      - "{{ bind_mounts_force_allow_prefixes | to_json }}"
+      - apply
+  become: true
+  loop: "{{ bind_mounts_mounts_flat }}"
+  loop_control:
+    extended: true
+    label: "{{ bind_mounts_mounts_flat[ansible_loop.index0].machine }}:{{ bind_mounts_mounts_flat[ansible_loop.index0].name }}"
+  register: bind_mounts_host_clear
+  changed_when: bind_mounts_host_clear.rc | default(1) | int == 10
+  failed_when: bind_mounts_host_clear.rc | default(-1) != 10
+  when: >-
+    bind_mounts_host_probe.results[ansible_loop.index0].rc | default(10) | int == 11
+    and not ansible_check_mode
 
 - name: Compute the per-mount readonly drift
   ansible.builtin.set_fact:
