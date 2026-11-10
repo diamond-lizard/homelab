@@ -35,8 +35,10 @@
   register: bind_mounts_host_probe
   changed_when: false
   check_mode: false
+  # In a loop the register holds the current item's own result, so the exit
+  # code is read from .rc; the finished list (.results) does not exist yet.
   failed_when: >-
-    bind_mounts_host_probe.results[ansible_loop.index0].rc | default(10) not in [0, 3, 4, 10]
+    bind_mounts_host_probe.rc | default(10) not in [0, 3, 4, 10]
 
 - name: Compute the per-mount readonly drift
   ansible.builtin.set_fact:
