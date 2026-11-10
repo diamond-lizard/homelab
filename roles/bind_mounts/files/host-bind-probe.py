@@ -43,6 +43,8 @@ def main():
         allow_raw = json.loads(allow_json or "[]")
     except ValueError:
         allow_raw = [p for p in (allow_json or "").strip().strip('[]').split(',') if p.strip()]
+    if isinstance(allow_raw, str):
+        allow_raw = [p for p in allow_raw.split(',') if p.strip()]
     labels = (src, recorded, share_root)
     layers = mount_lines(tgt)
     if not layers:
