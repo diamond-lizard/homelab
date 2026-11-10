@@ -224,6 +224,13 @@ state directory (see Ledger).
 *** packages lists the guest packages, in alphabetical order
 They are installed with one pacman call per running machine on the
 software selection; --needed makes a re-run install only what is missing.
+The install never refreshes the package databases (no -Sy), so a guest is
+never partially upgraded. Before installing, the step checks each running
+guest read-only (in check mode too) and stops, naming the machine, when
+its databases are missing, are ahead of its installed packages (pacman -Qu
+lists packages), or the check gave an answer it cannot trust. Upgrade a
+guest once and on purpose with smolvm machine exec --name <machine> --
+pacman -Syu, then re-run.
 *** share_target is the guest path of the share root in bind mode
 *** machines holds one entry per smolvm machine with unique names
 **** user plus uid and gid select the account and created-dir ownership
@@ -293,6 +300,9 @@ to bind and verify.
 Installs the configured packages on running machines. A machine that is
 not running is skipped with a note; an empty packages list disables the
 segment.
+A running machine whose package databases are missing or ahead of its
+installed packages is refused first (see packages), also in check mode,
+which skips only the install.
 *** verify
 Checks every mount read-only. Does not change anything. Like attach and
 mounts, it halts first on an unproven volume at a configured target
@@ -572,6 +582,19 @@ a mount target is left alone and shown as unproven in the end-of-run summary.
 While the file exists and is unreadable nothing is written either, so fix or
 delete it, then re-run to record the volumes a run changes. With the file
 gone, a run that applies a volume change writes the volume facts it recorded.
+*** The software step refuses a guest until it is upgraded once
+A fresh guest whose package databases are missing, and a guest whose
+databases an earlier pacman -Sy left ahead of its installed packages,
+make the software step stop with an ACTION REQUIRED box naming the machine
+and the command to run: smolvm machine exec --name <machine> -- pacman
+-Syu. The step never upgrades a guest itself, because an upgrade can
+replace libraries under live sessions. After the upgrade the step installs
+only what is missing and a re-run changes nothing. A box that says the
+package state could not be checked means the guest's pacman gave an
+answer the step does not trust (the exec failed, pacman is missing, or it
+wrote an error); run pacman -Qu in the guest to see why. An install that
+fails because the databases are older than the mirrors reports pacman's
+own error; the same upgrade fixes it.
 *** The smolvm exec user must be root for the playbook to manage a guest
 The playbook reaches a guest only through smolvm machine exec, which runs
 as the exec user configured on the machine. Guest-side mounts need root;

@@ -313,6 +313,21 @@ default run and --tags attach converge a volume set (teardown removes the
 volumes the ledger records); of the partial selections, start, mounts,
 software, and verify never touch the volume set and do not refuse on a
 pending change.
+*** The software step never partially upgrades a guest
+The play installs with pacman -S --needed and never refreshes the package
+databases on its own: refreshing without upgrading (pacman -Sy) leaves a
+guest whose databases are newer than its installed system, and the next
+install then pulls newer dependencies into an old system. Before the
+install, one exec per running machine prints marker lines (sync databases
+present, pacman present, the exit status and stderr of pacman -Qu, and
+one line per package -Qu lists). The step trusts only an exact shape: a
+missing database is refused, a non-empty -Qu list means the databases are
+ahead of the system and is refused, and anything else unexpected (an exec
+failure, pacman missing, output on stderr, an exit status other than 0 or
+1) is refused as unchecked; only an empty list with clean markers
+installs. Each refusal is an ACTION REQUIRED box that names the one
+command to run on purpose, pacman -Syu. The checks are read-only and run
+in check mode; the install is skipped there.
 *** Missing guest prerequisites fail the phase before any mutation
 Each phase preflights, per machine, only the prerequisites it needs (the
 guest tools, root exec, and for the mounts phase the configured user with
