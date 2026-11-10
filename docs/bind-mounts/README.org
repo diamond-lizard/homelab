@@ -511,18 +511,17 @@ The replacement of a proven-stale host bind whose source changed, of a
 forced host bind, and of a stacked host bind is meant to happen on a
 stopped machine through the host-bind probe, but the probe runs umount as
 the invoking user. The host refuses it ("umount: ...: must be superuser
-to unmount."), and the probe exits 1 with a CalledProcessError traceback.
-The probe task's failed_when does not catch that exit code (ISSUE-3), so
-the run does not stop there: the traceback is visible only with -v, the
-old bind stays in place, and the run carries on (a stopped machine then
-ends on the guest-bind box). A check-mode run behaves the same, because
-the probe runs in check mode too. Measured on Void Linux with util-linux
-2.41.4 and exercised on a scratch machine for a changed source, with
---check and with a real mounts run; the forced and stacked cases reach
-the same umount in the code. Until ISSUE-1 is fixed, restore the previous
-source in the configuration and re-run. Removals and renames are not
-affected: they unmount through the ledger-stale cleanup, which runs as
-root.
+to unmount."), the probe exits 1 with a CalledProcessError traceback, and
+the run stops at the probe task with the old bind still in place; the
+failed task prints the traceback without -v. A check-mode run on a
+stopped machine stops the same way, because the probe runs in check mode
+too. Measured on Void Linux with util-linux 2.41.4 and exercised on a
+scratch machine for a changed source, with --check and with a real
+mounts run; the forced and stacked cases reach the same umount in the
+code. Until the probe unmounts with the needed privilege, restore the
+previous source in the configuration and re-run. Removals and renames
+are not affected: they unmount through the ledger-stale cleanup, which
+runs as root.
 *** After a host reboot a standalone start mounts nothing
 Host binds are runtime state and do not survive reboots, so the share
 subdirectories are empty and the guest helpers refuse to bind from them.
