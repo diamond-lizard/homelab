@@ -117,9 +117,12 @@ makes for its own length. Subject to the volume
 ceiling.
 *** Switching between modes
 Stop the machines, change mode in the configuration, and run the default
-playbook. The run converges the volume set in both directions, removes
-bind-mode artifacts when switching to direct, starts the machines, and
-verifies the result. The attach tag remains available for explicit,
+playbook. The run converges the volume set in both directions and starts
+the machines. Direct to bind finishes and verifies in that run. Bind to
+direct halts on the stale host binds, which cannot be unmounted while a
+machine runs: stop the machines, run the mounts selection to unmount them
+and prune their share subdirectories, then run the default playbook to
+finish and verify. The attach tag remains available for explicit,
 step-by-step convergence on stopped machines.
 ** smolvm constraints
 *** The volume ceiling is a libkrun device budget
@@ -248,6 +251,10 @@ is stopped. A running machine halts the run with an ACTION REQUIRED
 message first: libkrun keeps host-side file descriptors open on the share
 bind for the lifetime of the VM, so the old bind cannot be unmounted and
 even -e bind_mounts_force_remount=true must wait for a stopped machine.
+Today the host-bind probe's own umount runs without root, so replacing a
+host bind whose source changed fails on a stopped machine (README,
+Replacing a host bind with a different source fails); removals and
+renames unmount through the ledger-stale cleanup, which runs with become.
 A bind the kernel marks //deleted — the source directory was unlinked
 while the bind stayed mounted — is still playbook-owned when the path
 minus that marker matches the configured or ledger-recorded source; it remediates like any proven-stale bind, without force. A guest layer is
@@ -284,10 +291,12 @@ Source-path comparison is deliberately avoided because the kernel reports
 bind sources in normalized form that cannot be matched by string
 equality. Proven-stale binds are remediated as above; readonly drift is
 remounted in place, which needs no umount and works on running machines.
-Rename convergence follows the same stopped-machine rule: a renamed share
-subdirectory, or a changed share source for the same guest target, is
-unmounted and re-mounted from the new share path on the next run after
-the machine stops.
+Rename convergence follows the same stopped-machine rule: the old share
+subdirectory's host bind is ledger-stale, so after the machine stops the
+mounts selection unmounts it, prunes the emptied directory and binds the
+new name, and the next default run mounts the guest bind from the new
+share path. A changed share source for the same name is not converged
+yet (see above): the probe's umount runs without root.
 *** An unreadable ledger disables cleanup for that run
 *** Stopped versus running machines gate different phases
 Guest mount collection and guest binds require running machines. Volume

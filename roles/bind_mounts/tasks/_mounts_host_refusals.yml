@@ -1,8 +1,12 @@
 ---
-# Mounts step 3a: what the identity probe refused. A proven-stale bind on a
-# running machine refuses behind the stop-first box; an unproven stack
-# refuses with the layered box naming the machine, the target, every layer,
-# the exact force switch, and the manual umount command. Nothing mutated.
+# Mounts step 8a (included first by _mounts_host_stale.yml, after the guest
+# work): what the identity probe refused. A bind on a running machine that
+# does not match its configured source refuses behind the stop-first box; an
+# unproven stack refuses with the layered box naming the machine, the
+# target, every layer, the exact force switch, and the manual umount
+# command. The refusals mutate nothing themselves; the share tree, host
+# binds and guest work of this phase have already executed, and the
+# stopped-machine box (_mounts_stopped.yml) runs after this file.
 - name: Collect the stale binds that need a stopped machine
   ansible.builtin.set_fact:
     bind_mounts_probe_stop: >-
@@ -14,14 +18,19 @@
   vars:
     bind_mounts_box_lines:
       - "{{ '%-70s' | format('=' * 69) }}"
-      - "{{ '%-70s' | format('  Machine(s) whose stale mounts need the machine stopped:') }}"
+      - "{{ '%-70s' | format('  Machine(s) with a host bind that does not match its source:') }}"
       - "{{ '%-70s' | format('') }}"
       - "{{ '%-70s' | format(('    ' ~ (bind_mounts_probe_stop | map(attribute='machine') | unique | join(', ')))[:70]) }}"
       - "{{ '%-70s' | format('') }}"
-      - "{{ '%-70s' | format('  The machine is running, and this run cannot replace') }}"
-      - "{{ '%-70s' | format('  these mounts while it runs. Stop each machine above,') }}"
-      - "{{ '%-70s' | format('      smolvm machine stop --name <machine-name>') }}"
-      - "{{ '%-70s' | format('  then re-run. Nothing else was changed by this run.') }}"
+      - "{{ '%-70s' | format('  The machine is running, so this run cannot replace the bind.') }}"
+      - "{{ '%-70s' | format('  Stopping the machine does not help yet: replacing a host') }}"
+      - "{{ '%-70s' | format('  bind on a stopped machine currently fails, because the') }}"
+      - "{{ '%-70s' | format('  host-bind probe runs umount without root. If you changed a') }}"
+      - "{{ '%-70s' | format('  mount src in the configuration, restore the previous src') }}"
+      - "{{ '%-70s' | format('  and re-run. Details: docs/bind-mounts/README.org,') }}"
+      - "{{ '%-70s' | format('  Troubleshooting, Replacing a host bind with a different') }}"
+      - "{{ '%-70s' | format('  source fails (known limitation).') }}"
+      - "{{ '%-70s' | format('  Earlier steps of this run may already have changed state.') }}"
       - "{{ '%-70s' | format('=' * 69) }}"
   ansible.builtin.fail:
     msg: "{{ bind_mounts_box_lines | action_box }}"
