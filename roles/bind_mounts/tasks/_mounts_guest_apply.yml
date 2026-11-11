@@ -30,13 +30,16 @@
   changed_when: >-
     'mounted:' in (bind_mounts_guest_mount.stdout | default(''))
     or 'remounted:' in (bind_mounts_guest_mount.stdout | default(''))
+  # Every exit code is classified by the next task: 3 and 4 are refusals, any
+  # code other than 0, 3 and 4 ends the run on the helper-failed box (recorded
+  # after the lane write in _mounts_guest_record.yml).
   failed_when: false
   when: not ansible_check_mode
 
 - name: Classify the guest binds the helper refused
   ansible.builtin.set_fact:
     bind_mounts_guest_refused: >-
-      {%- set out = {'volume': [], 'unproven': [], 'proven': [], 'empty_share': []} -%}
+      {%- set out = {'volume': [], 'unproven': [], 'proven': [], 'empty_share': [], 'failed': []} -%}
       {%- for r in (bind_mounts_guest_mount.results | default([])) -%}
       {%- if r.rc is defined and r.rc == 3 -%}
       {%- set vols = bind_mounts_sections.get(r.bind_mounts_ensure_item.machine, {}).mounts | default([]) -%}
@@ -59,6 +62,13 @@
             'src': r.bind_mounts_ensure_item.src,
             'host_target': r.bind_mounts_ensure_item.host_target,
             'stderr': r.stderr | default('') }) -%}
+      {%- endif -%}
+      {%- if not (r.skipped | default(false)) and (r.rc is not defined or r.rc not in [0, 3, 4]) -%}
+      {%- set err = ((r.stderr | default('', true)) or (r.msg | default('', true))) | string -%}
+      {%- set _ = out['failed'].append({'machine': r.bind_mounts_ensure_item.machine,
+            'target': r.bind_mounts_ensure_item.target,
+            'rc': r.rc | default('none'),
+            'detail': err.splitlines()[-3:] }) -%}
       {%- endif -%}
       {%- endfor -%}
       {{ out }}

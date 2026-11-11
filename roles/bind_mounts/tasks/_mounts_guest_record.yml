@@ -135,6 +135,18 @@
       {%- set _ = out.update({r.bind_mounts_ensure_item.machine:
             (out.get(r.bind_mounts_ensure_item.machine, []) or []) + [row]}) -%}
       {%- endif -%}
+      {#- A target whose ensure failed (any code other than 0, 3, 4) keeps its
+          prior ledger row verbatim: the lane replace would otherwise drop the
+          ownership proof of a bind that is still mounted. -#}
+      {%- if not (r.skipped | default(false)) and (r.rc is not defined or r.rc not in [0, 3, 4]) -%}
+      {%- set prior = (bind_mounts_ledger.machines | default({})).get(r.bind_mounts_ensure_item.machine, {})
+            .get('guest_binds', [])
+            | selectattr('target', 'eq', r.bind_mounts_ensure_item.target) | first | default(none) -%}
+      {%- if prior is not none -%}
+      {%- set _ = out.update({r.bind_mounts_ensure_item.machine:
+            (out.get(r.bind_mounts_ensure_item.machine, []) or []) + [prior]}) -%}
+      {%- endif -%}
+      {%- endif -%}
       {%- endfor -%}
       {#- Lane truth follows observation (every examined running bind-mode
           machine gets its lane written, empty when it has no configured
@@ -153,3 +165,30 @@
       {%- endfor -%}
       {{ out }}
   ansible.builtin.include_tasks: _ledger_write.yml
+
+# Last on purpose: the lane write above has already recorded the binds that
+# did converge, so a failure on one target never loses the observation of the
+# others. Exit codes 3 and 4 are the refusals above; any other code (a failed
+# mount or remount, unreadable mount options, a failed machine exec) lands here.
+- name: ACTION REQUIRED - guest bind(s) the helper could not ensure
+  vars:
+    bind_mounts_box_lines: >-
+      {%- set out = ['=' * 70] -%}
+      {%- set _ = out.append('  The guest bind helper failed on these targets:') -%}
+      {%- set _ = out.append('') -%}
+      {%- for r in bind_mounts_guest_refused.failed -%}
+      {%- set _ = out.append('    ' ~ r.machine ~ ': ' ~ r.target ~ ' (exit ' ~ r.rc ~ ')') -%}
+      {%- for line in r.detail -%}
+      {%- set _ = out.append('        ' ~ line[:60]) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {%- set _ = out.append('') -%}
+      {%- set _ = out.append('  These targets may be unmounted or in the wrong readonly state.') -%}
+      {%- set _ = out.append('  Fix the cause named above, then re-run the mounts phase; the') -%}
+      {%- set _ = out.append('  verify phase shows the current state without changing it.') -%}
+      {%- set _ = out.append('  Earlier steps of this run may already have changed state.') -%}
+      {%- set _ = out.append('=' * 70) -%}
+      {{ out }}
+  ansible.builtin.fail:
+    msg: "{{ bind_mounts_box_lines | action_box }}"
+  when: bind_mounts_guest_refused.failed | length > 0
