@@ -33,7 +33,7 @@ The run-written record (`~/.local/state/bind-mount-on-host-and-guest/`) naming t
 _Avoid_: state file, inventory
 
 **Stacked bind**:
-A second bind mounted at a target that already carries one, used to layer per-machine content over the share bind; identity is proven by device:inode, not by path.
+A second host bind left at a share subdirectory that already carries one, by an interrupted remediation or manual mounting; never intended. The mounts phase refuses it on a running machine, collapses it on a stopped one when the ledger proves it ours, and verify requires exactly one layer; layer ownership is decided by device and filesystem root, not by path.
 _Avoid_: overlay mount
 
 **Scratch machine**:

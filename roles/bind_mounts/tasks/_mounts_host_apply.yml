@@ -3,7 +3,8 @@
 # probe keeps the live device:inode re-check and the //deleted exception and
 # only inspects (findmnt/stat, unprivileged, never unmounts): exit 0 matched,
 # 3 an unproven stack it refuses (the force switch accepts named layers),
-# 4 a stale bind under a running machine, 10 nothing mounted, 11 removal
+# 4 a stale bind under a running machine, 5 a stack under a running machine
+# (refused right after this file), 10 nothing mounted, 11 removal
 # needed (a not-running machine whose bind the ledger proves ours, the
 # //deleted exception, or forced layers). The clear task then runs the
 # probe's apply form as root, which re-checks every layer and umounts it,
@@ -42,7 +43,7 @@
   # In a loop the register holds the current item's own result, so the exit
   # code is read from .rc; the finished list (.results) does not exist yet.
   failed_when: >-
-    bind_mounts_host_probe.rc | default(10) not in [0, 3, 4, 10, 11]
+    bind_mounts_host_probe.rc | default(10) not in [0, 3, 4, 5, 10, 11]
 
 # Clear what the probe asked to remove (rc 11). The apply form of the probe
 # re-checks every layer's ownership right before each umount, so root only

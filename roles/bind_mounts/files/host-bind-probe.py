@@ -2,12 +2,14 @@
 """Host-side bind identity probe for the share tree.
 
 Decides whether the live mount at one share subdirectory is this playbook's
-own and what to do about it: 0 = bound from the configured source (or the
-top layer is and the stack collapses on a stopped machine); 3 = the stack
-holds layers the ledger cannot prove ours; 4 = stale or foreign and the
-machine is running; 10 = nothing is mounted (or, in apply mode, the layers
-were cleared): bind the configured source; 11 = plan mode only: every layer
-is removable and the apply form must clear them first; 2 = usage error;
+own and what to do about it: 0 = one layer bound from the configured source;
+3 = the stack holds layers the ledger cannot prove ours; 4 = stale or foreign
+and the machine is running; 5 = a stack of more than one layer whose top layer
+is bound from the configured source and the machine is running (never
+accepted: libkrun keeps the lower layer pinned, so the stack is collapsed only
+while the machine is stopped); 10 = nothing is mounted (or, in apply mode, the
+layers were cleared): bind the configured source; 11 = plan mode only: every
+layer is removable and the apply form must clear them first; 2 = usage error;
 1 = the mount options of the target could not be read (RO-STATE: unknown).
 The last argument is the mode: plan only inspects and never unmounts;
 apply re-checks every layer right before each umount (run it as root).
@@ -21,6 +23,8 @@ import sys
 from host_bind_layers import (deleted_ours, layer_context, layer_display,
                               layer_label, layer_provable, layer_removable,
                               mount_layers, ro_state, stat_id)
+
+STACKED_RUNNING_RC = 5
 
 
 def refuse_stack(tgt, src, layers, bad, force_named):
@@ -76,8 +80,10 @@ def main():
         print(f"OK: {tgt} bound from {src}")
         return 0
     if matched and len(layers) > 1 and state == "running":
-        print(f"OK: {tgt} top layer bound from {src}; stack collapses when the machine is stopped")
-        return 0
+        print(f"ACTION REQUIRED: {tgt} is a stack of {len(layers)} layers and machine {machine} is running; this run will not change it.", file=sys.stderr)
+        print(f"ACTION REQUIRED:   smolvm machine stop --name {machine}", file=sys.stderr)
+        print("ACTION REQUIRED: then re-run only the mounts selection; the stack is collapsed while the machine is stopped.", file=sys.stderr)
+        return STACKED_RUNNING_RC
     if state == "running":
         why = ("proven ours, but the source directory was deleted" if deleted
                else "proven ours by ledger" if ours else "not proven by the ledger")

@@ -143,7 +143,11 @@ subdirectory from the new source, and ends on the ACTION REQUIRED box for
 guest binds on a stopped machine, which is expected. Stacked binds at a
 share subdirectory (left by an interrupted remediation or by manual
 stacking) are detected and collapsed by the same stopped-machine mounts
-run; verify requires exactly one layer after a successful run.
+run. On a running machine the mounts phase refuses a stack before any
+guest work, with a box that names the stop-first route, because libkrun
+keeps the lower layer pinned while the machine runs and the guest would
+see the old and the new layer side by side; verify requires exactly one
+layer after a successful run.
 **** Direct mode: the guest must be stopped for the volume re-creation
 A source or readonly change removes and re-adds the volume, so the
 stopped-machine rule for volume changes applies.
