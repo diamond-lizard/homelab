@@ -18,9 +18,9 @@ import os
 import subprocess
 import sys
 
-from host_bind_layers import (deleted_ours, layer_display, layer_forced,
-                              layer_label, layer_provable, layer_removable,
-                              mount_lines, norm, ro_state, stat_id, subpath)
+from host_bind_layers import (deleted_ours, layer_context, layer_display,
+                              layer_forced, layer_label, layer_provable,
+                              layer_removable, mount_layers, ro_state, stat_id)
 
 
 def refuse_stack(tgt, src, layers, bad, force_named):
@@ -28,9 +28,10 @@ def refuse_stack(tgt, src, layers, bad, force_named):
     print("REFUSED: cannot prove it created every layer of the stack.", file=sys.stderr)
     print("REFUSED:   layers at that path, bottom first:", file=sys.stderr)
     for l in layers:
-        print(f"REFUSED:     {layer_display(l)}", file=sys.stderr)
+        print(f"REFUSED:     {layer_display(l.source)}", file=sys.stderr)
     for l in bad:
-        print(f"ALLOW-PREFIX: /{subpath(l)}")
+        if l.fsroot is not None:
+            print(f"ALLOW-PREFIX: {l.fsroot}")
     print("REFUSED: nothing was mounted, unmounted or otherwise changed.", file=sys.stderr)
     print("REFUSED: to rebuild the mount from the configured source, re-run with", file=sys.stderr)
     print("REFUSED:   -e bind_mounts_force_remount=true", file=sys.stderr)
@@ -53,16 +54,16 @@ def main():
         allow_raw = [p for p in (allow_json or "").strip().strip('[]').split(',') if p.strip()]
     if isinstance(allow_raw, str):
         allow_raw = [p for p in allow_raw.split(',') if p.strip()]
-    labels = (src, recorded, share_root)
-    layers = mount_lines(tgt)
+    ctx = layer_context(src, recorded, share_root)
+    layers = mount_layers(tgt)
     if not layers:
         print("REMEDIATE: not mounted", file=sys.stderr)
         return 10
     print(f"LAYERS: {len(layers)}")
     for l in layers:
-        print(f"LAYER-SRC: {layer_display(l)}  {layer_label(l, *labels)}")
+        print(f"LAYER-SRC: {layer_display(l.source)}  {layer_label(l, ctx)}")
     print(f"RO-STATE: {ro_state(tgt)}")
-    deleted = any(deleted_ours(l, src, recorded) for l in layers)
+    deleted = any(deleted_ours(l, ctx) for l in layers)
     matched = stat_id(src) is not None and stat_id(src) == stat_id(tgt)
     rec_id = stat_id(recorded) if recorded else None
     ours = (rec_id is not None and rec_id == stat_id(tgt)) or deleted
@@ -79,28 +80,25 @@ def main():
         print(f"ACTION REQUIRED:   smolvm machine stop --name {machine}", file=sys.stderr)
         print("ACTION REQUIRED: then re-run; the stale bind is remediated while the machine is stopped.", file=sys.stderr)
         return 4
-    bad = [l for l in layers if not (layer_provable(l, src, recorded, share_root)
-                                     or layer_forced(l, force, allow_raw, share_root)
-                                     or deleted_ours(l, src, recorded))]
     if not (ours or force == "true"):
-        wanted = [l for l in layers if not layer_provable(l, src, recorded, share_root)]
+        wanted = [l for l in layers if not layer_provable(l, ctx)]
         return refuse_stack(tgt, src, layers, wanted,
-                            ",".join('/' + subpath(l) for l in wanted))
+                            ",".join(l.fsroot for l in wanted if l.fsroot is not None))
     why = ("collapsed stack" if matched else "the source directory was deleted" if deleted
            else "proven ours by ledger" if ours else "forced by user")
     for _ in range(10):
-        layers = mount_lines(tgt)
+        layers = mount_layers(tgt)
         if not layers:
             break
-        bad = [l for l in layers if not layer_removable(l, src, recorded, force, share_root, allow_raw)]
+        bad = [l for l in layers if not layer_removable(l, ctx, force, allow_raw)]
         if bad:
             return refuse_stack(tgt, src, layers, bad,
-                                ",".join('/' + subpath(l) for l in bad))
+                                ",".join(l.fsroot for l in bad if l.fsroot is not None))
         if mode == "plan":
             print(f"REMOVE-NEEDED: {tgt} has {len(layers)} layer(s) to clear ({why}); re-binding from {src} follows")
             return 11
         subprocess.run(["umount", tgt], check=True)
-    if mount_lines(tgt):
+    if mount_layers(tgt):
         print(f"REFUSED: {tgt} is still stacked after 10 attempts; stopping", file=sys.stderr)
         return 3
     print(f"REMEDIATED: stale bind at {tgt} cleared ({why}); re-binding from {src}")

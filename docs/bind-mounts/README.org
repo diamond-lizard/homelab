@@ -167,6 +167,13 @@ empty and holds one path or several separated by commas. Only layers at
 or below a named path are accepted, and a layer that is not named stays
 refused even when force is set.
 
+For a host bind layer the named path is the layer's path inside its own
+filesystem, exactly as the refusal box prints it after
+-e bind_mounts_force_allow_prefixes=; it is compared by whole path segments
+and is not resolved through symlinks. Ownership of a layer is decided by the
+device and filesystem root the kernel reports for it, compared with those of
+the configured source, the ledger-recorded source and the share root.
+
 #+BEGIN_SRC
 ansible-playbook playbooks/smolvm/profile.yml -i inventory -K -e bind_mounts_force_remount=true -e bind_mounts_force_allow_prefixes=/home/you/share-old
 #+END_SRC

@@ -261,6 +261,17 @@ before each umount (up to 10 layers): a changed source, a forced remount
 and a stacked bind converge this way on a stopped machine. Removals and
 renames unmount through the ledger-stale cleanup, which also runs with
 become.
+A host bind layer is identified by the device and the filesystem root the
+kernel reports for it (findmnt MAJ:MIN and FSROOT), never by resolving its
+filesystem-relative path on the host. The configured source, the
+ledger-recorded source and the share root are translated into the same pair
+with findmnt -T (for a source that no longer exists, the nearest existing
+ancestor plus the removed remainder), so a layer is provable when its pair is
+the configured or recorded source's, or sits at or below the share root's.
+A layer whose pair cannot be determined is not provable. The refusal box's
+layer labels and the removal check come from the same predicates, and the
+paths it prints for bind_mounts_force_allow_prefixes are layer paths inside
+their own filesystems.
 A bind the kernel marks //deleted — the source directory was unlinked
 while the bind stayed mounted — is still playbook-owned when the path
 minus that marker matches the configured or ledger-recorded source; it remediates like any proven-stale bind, without force. A guest layer is
