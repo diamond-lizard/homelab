@@ -85,8 +85,11 @@
       {%- set _ = out.append('') -%}
       {%- set _ = out.append('      -e bind_mounts_force_remount=true') -%}
       {%- if bind_mounts_probe_prefixes | length > 0 -%}
-      {%- set _ = out.append('      -e bind_mounts_force_allow_prefixes='
+      {%- set _ = out.append('      -e bind_mounts_force_allow_layer_prefixes='
             ~ (bind_mounts_probe_prefixes | join(','))) -%}
+      {%- set _ = out.append('') -%}
+      {%- set _ = out.append("  The path is the layer's path inside its own filesystem, as") -%}
+      {%- set _ = out.append('  printed above, not the path ls shows. Paste it unchanged.') -%}
       {%- endif -%}
       {%- set _ = out.append('') -%}
       {%- set _ = out.append('  Earlier steps of this run may already have changed state.') -%}

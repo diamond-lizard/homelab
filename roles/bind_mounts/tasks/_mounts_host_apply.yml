@@ -31,7 +31,7 @@
       - "{{ bind_mounts_mounts_gate[bind_mounts_probe_mount.machine].state }}"
       - "{{ bind_mounts_force_remount | bool | string | lower }}"
       - "{{ bind_mounts_probe_mount.host_root }}"
-      - "{{ bind_mounts_force_allow_prefixes | to_json }}"
+      - "{{ bind_mounts_force_allow_layer_prefixes | to_json }}"
       - plan
   loop: "{{ bind_mounts_mounts_flat }}"
   loop_control:
@@ -71,7 +71,7 @@
       - "{{ bind_mounts_mounts_gate[bind_mounts_probe_mount.machine].state }}"
       - "{{ bind_mounts_force_remount | bool | string | lower }}"
       - "{{ bind_mounts_probe_mount.host_root }}"
-      - "{{ bind_mounts_force_allow_prefixes | to_json }}"
+      - "{{ bind_mounts_force_allow_layer_prefixes | to_json }}"
       - apply
   become: true
   loop: "{{ bind_mounts_mounts_flat }}"

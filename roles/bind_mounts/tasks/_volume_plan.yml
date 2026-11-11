@@ -78,7 +78,7 @@
                          | selectattr('target', 'eq', ov.target) | list | length) > 0 -%}
       {%- set named = ov.target in named_targets -%}
       {%- set force_ok = bind_mounts_force_remount | bool and named
-            and (ov.src | path_under_any(bind_mounts_force_allow_prefixes)) -%}
+            and (ov.src | path_under_any(bind_mounts_force_allow_volume_prefixes)) -%}
       {%- if force_ok and not proven -%}
       {%- set _ = removes.append({'src': ov.src, 'target': ov.target}) -%}
       {%- endif -%}

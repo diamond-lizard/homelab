@@ -28,7 +28,7 @@
             'configured': u.configured,
             'ledger': u.ledger,
             'force_switch': '-e bind_mounts_force_remount=true',
-            'force_prefixes': bind_mounts_force_allow_prefixes,
+            'force_prefixes': bind_mounts_force_allow_volume_prefixes,
             'manual_command': cmd }) -%}
       {%- endfor -%}
       {%- endfor -%}
@@ -73,7 +73,8 @@
       {%- set _ = out.append('%-70s' | format('  removed only when its source also lies at or below a path')) -%}
       {%- set _ = out.append('%-70s' | format('  named in this extra variable as well:')) -%}
       {%- set _ = out.append('%-70s' | format('')) -%}
-      {%- set _ = out.append('%-70s' | format('      -e bind_mounts_force_allow_prefixes=<path at or above observed>')) -%}
+      {%- set _ = out.append('%-70s' | format('      -e bind_mounts_force_allow_volume_prefixes=<path>')) -%}
+      {%- set _ = out.append('%-70s' | format('  where <path> is a host path at or above the observed source.')) -%}
       {%- set _ = out.append('%-70s' | format('')) -%}
       {%- endif -%}
       {%- set _ = out.append('%-70s' | format('  A forced volume is detached, and replaced where the')) -%}

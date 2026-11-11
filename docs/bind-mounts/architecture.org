@@ -173,7 +173,7 @@ share target in bind mode, a mount target in direct mode) is replaced when
 the ledger proves it ours or force is set, and refused as unproven
 otherwise. A volume at any other target the configuration names (in bind
 mode, a mount target) is unproven; it is removed only with force plus a source
-under a bind_mounts_force_allow_prefixes entry, compared by whole path
+under a bind_mounts_force_allow_volume_prefixes entry, compared by whole path
 segments. A volume at a target the configuration does not name is foreign:
 never removed, listed as external, and counted against max_volumes. An
 unproven volume refuses the run: the shared prelude, right after the plan and
@@ -270,7 +270,7 @@ ancestor plus the removed remainder), so a layer is provable when its pair is
 the configured or recorded source's, or sits at or below the share root's.
 A layer whose pair cannot be determined is not provable. The refusal box's
 layer labels and the removal check come from the same predicates, and the
-paths it prints for bind_mounts_force_allow_prefixes are layer paths inside
+paths it prints for bind_mounts_force_allow_layer_prefixes are layer paths inside
 their own filesystems.
 A bind the kernel marks //deleted — the source directory was unlinked
 while the bind stayed mounted — is still playbook-owned when the path

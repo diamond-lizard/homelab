@@ -166,20 +166,26 @@ without force, so it never reaches this refusal.
 
 A layer it cannot prove, such as one left behind by an earlier layout
 or mounted by hand, is accepted when its path is named in
-bind_mounts_force_allow_prefixes, an extra-vars value that defaults to
+bind_mounts_force_allow_layer_prefixes, an extra-vars value that defaults to
 empty and holds one path or several separated by commas. Only layers at
 or below a named path are accepted, and a layer that is not named stays
-refused even when force is set.
+refused even when force is set. This variable covers host binds only: the
+volume variable below is separate, and a path named in one never licenses
+the other.
 
 For a host bind layer the named path is the layer's path inside its own
 filesystem, exactly as the refusal box prints it after
--e bind_mounts_force_allow_prefixes=; it is compared by whole path segments
-and is not resolved through symlinks. Ownership of a layer is decided by the
-device and filesystem root the kernel reports for it, compared with those of
-the configured source, the ledger-recorded source and the share root.
+-e bind_mounts_force_allow_layer_prefixes=; paste that line unchanged. It is
+compared by whole path segments and is not resolved through symlinks. It is
+not the path ls shows when the share's filesystem is mounted somewhere other
+than /: a layer whose source is /mnt/disk/home/you/share-old, on a filesystem
+mounted at /mnt/disk, is named /home/you/share-old. Ownership of a layer is
+decided by the device and filesystem root the kernel reports for it, compared
+with those of the configured source, the ledger-recorded source and the share
+root.
 
 #+BEGIN_SRC
-ansible-playbook playbooks/smolvm/profile.yml -i inventory -K -e bind_mounts_force_remount=true -e bind_mounts_force_allow_prefixes=/home/you/share-old
+ansible-playbook playbooks/smolvm/profile.yml -i inventory -K --tags mounts -e bind_mounts_force_remount=true -e bind_mounts_force_allow_layer_prefixes=/home/you/share-old
 #+END_SRC
 
 For a host bind the forced run needs the machine stopped, so it must be
@@ -187,16 +193,22 @@ the mounts selection (add --tags mounts): a default run starts the
 machine before its mounts phase, and the running machine refuses first.
 Volumes are not affected.
 
-Volumes follow the same switch with two differences. A volume at a target
-where the configuration wants a different volume (the share target in bind
-mode, a mount target in direct mode) is replaced when force is set, whatever
-its source. An unproven volume at any other target the configuration names
-(in bind mode, a mount target) is removed only when force is set and its
-source lies at or below a path named in bind_mounts_force_allow_prefixes;
-paths are compared by whole path segments after resolving symlinks, so
-/home/you/share matches /home/you/share/old but not /home/you/share-old.
-A volume at a target the configuration does not name is never removed, with
-or without force. Volumes are removed only from a stopped machine.
+Volumes follow the same force switch with two differences, and have a
+variable of their own. A volume at a target where the configuration wants a
+different volume (the share target in bind mode, a mount target in direct
+mode) is replaced when force is set, whatever its source. An unproven volume
+at any other target the configuration names (in bind mode, a mount target)
+is removed only when force is set and its source lies at or below a path
+named in bind_mounts_force_allow_volume_prefixes. That path is an ordinary
+host path, compared by whole path segments after resolving symlinks, so
+/home/you/share matches /home/you/share/old but not /home/you/share-old. It
+never accepts a host bind layer. A volume at a target the configuration does
+not name is never removed, with or without force. Volumes are removed only
+from a stopped machine.
+
+#+BEGIN_SRC
+ansible-playbook playbooks/smolvm/profile.yml -i inventory -K --tags attach -e bind_mounts_force_remount=true -e bind_mounts_force_allow_volume_prefixes=/home/you/share-old
+#+END_SRC
 
 Without force, or when a source is not covered by a named prefix, the
 unproven volume halts the run before any change; see An unproven volume at a
@@ -572,7 +584,7 @@ removal command. Two ways forward, both with the machine stopped: re-run
 with -e bind_mounts_force_remount=true (a volume where the configuration
 wants a different one is replaced; a volume at a mount target where none
 is wanted is removed only when you also pass -e
-bind_mounts_force_allow_prefixes=<path at or above its source>), or remove
+bind_mounts_force_allow_volume_prefixes=<path at or above its source>), or remove
 the volume yourself with smolvm machine update --name <machine>
 --remove-volume=<source>:<target>. The next run then converges. Teardown is
 never blocked by it. With an unreadable ledger only the volumes where the
