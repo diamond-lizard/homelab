@@ -543,6 +543,19 @@ advisory and read-only: nothing is changed to produce it.
 - Anything else (the source has files, or cannot be read, or the host
   bind state is unknown): the box says the cause could not be determined
   from the host side and lists the possibilities.
+*** A guest bind could not be ensured
+The guest helper exits 0 when the bind is in place (mounted, remounted or
+already right), 3 for a foreign mount and 4 for an empty share directory;
+those last two have their own boxes. Any other result (a mount or remount
+that failed inside the guest, mount options that could not be read, or the
+machine exec itself failing) halts the run with the ACTION REQUIRED box
+"guest bind(s) the helper could not ensure". It lists each machine and
+target with the helper's exit code and the last lines of its error output.
+The binds that did converge are recorded in the ledger before the box
+appears, and a failed target keeps its prior ledger row, so its ownership proof
+is not lost. The failed targets may be unmounted or in the wrong readonly state:
+fix the cause named in the box, then re-run the mounts phase; the verify
+phase shows the current state without changing it.
 *** An unproven volume at a configured target halts the run
 VOLUME-UNPROVEN-REFUSED means a volume sits at a target the configuration
 names and the ledger cannot prove this playbook attached it. The run stops
