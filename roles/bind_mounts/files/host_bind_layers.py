@@ -31,9 +31,15 @@ def stat_id(path):
 
 
 def ro_state(tgt):
-    opts = subprocess.run(["findmnt", "-rn", "-o", "OPTIONS", "-M", tgt],
-                          capture_output=True, text=True)
-    return 'ro' if 'ro' in opts.stdout.splitlines()[0].split(',') else 'rw'
+    # findmnt lists stacked layers bottom first. The last line is the visible
+    # top layer: the one mount -o remount changes and the one the probe's
+    # stat comparison sees. None when the options cannot be read.
+    p = subprocess.run(["findmnt", "-rn", "-o", "OPTIONS", "-M", tgt],
+                       capture_output=True, text=True)
+    lines = p.stdout.splitlines() if p.returncode == 0 else []
+    if not lines:
+        return None
+    return 'ro' if 'ro' in lines[-1].split(',') else 'rw'
 
 
 def _unescape(text):

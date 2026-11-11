@@ -7,7 +7,8 @@ top layer is and the stack collapses on a stopped machine); 3 = the stack
 holds layers the ledger cannot prove ours; 4 = stale or foreign and the
 machine is running; 10 = nothing is mounted (or, in apply mode, the layers
 were cleared): bind the configured source; 11 = plan mode only: every layer
-is removable and the apply form must clear them first; 2 = usage error.
+is removable and the apply form must clear them first; 2 = usage error;
+1 = the mount options of the target could not be read (RO-STATE: unknown).
 The last argument is the mode: plan only inspects and never unmounts;
 apply re-checks every layer right before each umount (run it as root).
 stdout: LAYERS:, LAYER-SRC:, RO-STATE:, ALLOW-PREFIX:, REMOVE-NEEDED:,
@@ -61,7 +62,12 @@ def main():
     print(f"LAYERS: {len(layers)}")
     for l in layers:
         print(f"LAYER-SRC: {layer_display(l.source)}  {layer_label(l, ctx)}")
-    print(f"RO-STATE: {ro_state(tgt)}")
+    ro = ro_state(tgt)
+    if ro is None:
+        print("RO-STATE: unknown")
+        print(f"ERROR: cannot read the mount options of {tgt}", file=sys.stderr)
+        return 1
+    print(f"RO-STATE: {ro}")
     deleted = any(deleted_ours(l, ctx) for l in layers)
     matched = stat_id(src) is not None and stat_id(src) == stat_id(tgt)
     rec_id = stat_id(recorded) if recorded else None
