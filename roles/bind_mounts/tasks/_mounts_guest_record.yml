@@ -1,8 +1,9 @@
 ---
 # Mounts step 6b: the refusals of the guest-bind ensure (a volume now on a
-# configured target; a foreign mount the ledger cannot prove) and the guest
-# lane at the observation site, with the helper's TRIPLE lines recorded so a
-# legacy entry at a still-configured target is re-marked by this re-mount.
+# configured target; a foreign mount the ledger cannot prove; a recorded
+# mount whose live layer is no longer the share) and the guest lane at the
+# observation site, with the helper's TRIPLE lines recorded so a legacy
+# entry at a still-configured target is re-marked by this re-mount.
 - name: Diagnose the empty guest share directories (read-only)
   ansible.builtin.include_tasks: _mounts_empty_share_diag.yml
   when: bind_mounts_guest_refused.empty_share | length > 0
@@ -92,6 +93,28 @@
   ansible.builtin.fail:
     msg: "{{ bind_mounts_box_lines | action_box }}"
   when: bind_mounts_guest_refused.unproven | length > 0
+
+- name: ACTION REQUIRED - guest bind(s) whose recorded layer was replaced
+  vars:
+    bind_mounts_box_lines: >-
+      {%- set out = ['=' * 70] -%}
+      {%- set _ = out.append('  Guest bind(s) whose recorded layer was replaced:') -%}
+      {%- for r in bind_mounts_guest_refused.proven -%}
+      {%- set _ = out.append('    ' ~ r.machine ~ ': ' ~ r.target) -%}
+      {%- endfor -%}
+      {%- set _ = out.append('  The ledger records a mount at each target, but the layer there now') -%}
+      {%- set _ = out.append('  is not the share. The role cannot tell its own stale bind from a') -%}
+      {%- set _ = out.append('  foreign mount stacked on top, so it left these targets alone.') -%}
+      {%- set _ = out.append('  Unmount each target in the guest, then re-run:') -%}
+      {%- set _ = out.append('') -%}
+      {%- set _ = out.append('      smolvm machine exec --name <machine> -- umount <target>') -%}
+      {%- set _ = out.append('') -%}
+      {%- set _ = out.append('  Earlier steps of this run may already have changed state.') -%}
+      {%- set _ = out.append('=' * 70) -%}
+      {{ out }}
+  ansible.builtin.fail:
+    msg: "{{ bind_mounts_box_lines | action_box }}"
+  when: bind_mounts_guest_refused.proven | length > 0
 
 - name: Collect the observed guest bind rows with their triples
   ansible.builtin.set_fact:

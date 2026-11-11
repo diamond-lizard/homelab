@@ -48,7 +48,7 @@
             | selectattr('observed', 'defined') | list | length == 0 -%}
       {%- set _ = out['unproven'].append(r.bind_mounts_ensure_item) -%}
       {%- else -%}
-      {%- set _ = out['proven'].append(r.item) -%}
+      {%- set _ = out['proven'].append(r.bind_mounts_ensure_item) -%}
       {%- endif -%}
       {%- endif -%}
       {%- if r.rc is defined and r.rc == 4 -%}
@@ -62,48 +62,6 @@
       {%- endif -%}
       {%- endfor -%}
       {{ out }}
-
-- name: Unmount the proven-own guest binds the helper refused
-  ansible.builtin.command:
-    argv: [smolvm, machine, exec, --name, "{{ bind_mounts_foreign_item.machine }}",
-           --, umount, "{{ bind_mounts_foreign_item.target }}"]
-  loop: "{{ bind_mounts_guest_refused.proven }}"
-  loop_control:
-    loop_var: bind_mounts_foreign_item
-    label: "{{ bind_mounts_foreign_item.machine }}:{{ bind_mounts_foreign_item.target }}"
-  changed_when: true
-  when:
-    - bind_mounts_guest_refused.proven | length > 0
-    - not ansible_check_mode
-
-- name: Re-mount the proven-own guest binds after remediation
-  ansible.builtin.command:
-    argv:
-      - smolvm
-      - machine
-      - exec
-      - --name
-      - "{{ bind_mounts_retry_item.machine }}"
-      - --
-      - python3
-      - "{{ bind_mounts_guest_helper_dir }}/guest-mount-one.py"
-      - "{{ bind_mounts_retry_item.target }}"
-      - "{{ bind_mounts_retry_item.share_path }}"
-      - "{{ bind_mounts_retry_item.uid_eff | string }}"
-      - "{{ bind_mounts_retry_item.gid_eff | string }}"
-      - "{{ bind_mounts_retry_item.readonly | string | lower }}"
-  loop: "{{ bind_mounts_guest_refused.proven }}"
-  loop_control:
-    loop_var: bind_mounts_retry_item
-    label: "{{ bind_mounts_retry_item.machine }}:{{ bind_mounts_retry_item.target }}"
-  register: bind_mounts_guest_retry
-  changed_when: >-
-    'mounted:' in (bind_mounts_guest_retry.stdout | default(''))
-    or 'remounted:' in (bind_mounts_guest_retry.stdout | default(''))
-  failed_when: false
-  when:
-    - bind_mounts_guest_refused.proven | length > 0
-    - not ansible_check_mode
 
 - name: Refuse the volume-carrying and unproven targets, record the lanes
   ansible.builtin.include_tasks: _mounts_guest_record.yml
