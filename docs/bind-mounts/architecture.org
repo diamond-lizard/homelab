@@ -145,7 +145,7 @@ changes; the attach tag refuses running machines instead of stopping them.
 *** Exec runs as the configured user
 smolvm machine exec executes as the machine's configured user, root by
 default. The role relies on this for guest management and preflights the
-exec privilege its phases need before any mutation.
+exec privilege its phases need before any guest mutation.
 ** Provenance ledger
 *** Format
 #+BEGIN_SRC yaml
@@ -328,12 +328,14 @@ failure, pacman missing, output on stderr, an exit status other than 0 or
 installs. Each refusal is an ACTION REQUIRED box that names the one
 command to run on purpose, pacman -Syu. The checks are read-only and run
 in check mode; the install is skipped there.
-*** Missing guest prerequisites fail the phase before any mutation
-Each phase preflights, per machine, only the prerequisites it needs (the
-guest tools, root exec, and for the mounts phase the configured user with
-a home directory); one refusal names every missing item with plain
-guidance instead of a helper traceback. The role never installs
-prerequisites and never trusts the image blindly.
+*** Missing guest prerequisites fail the phase before any guest mutation
+Each phase preflights, per machine, only the prerequisites it needs,
+before any guest mutation (the guest tools, root exec, and for the
+mounts phase the configured user with a home directory); the mounts phase
+has already prepared its share subdirectories and host binds by then. One
+refusal names every missing item with plain guidance instead of a helper
+traceback. The role never installs prerequisites and never trusts the
+image blindly.
 *** Exceeded volume budget fails with counts and the issue link
 The unproven-volume refusal runs before either budget check. The prelude counts
 every observed volume and refuses a machine that already

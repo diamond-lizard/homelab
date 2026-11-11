@@ -51,7 +51,7 @@
       is missing the prerequisites this run needs inside the guest:
       {{ bind_mounts_stage_result.stdout_lines | join(', ') }}. The role never
       installs prerequisites and never trusts the image blindly; provision
-      the machine with them first, then re-run. Nothing was changed.
+      the machine with them first, then re-run. This refusal changed nothing.
   loop: "{{ (bind_mounts_guest_preflight.results | default([]))
          | selectattr('stdout', 'defined') | list }}"
   loop_control:
@@ -67,8 +67,8 @@
       could not be evaluated: the guest exec itself failed
       (rc {{ bind_mounts_eval_result.rc | default('?') }}, stderr:
       {{ bind_mounts_eval_result.stderr_lines | default([]) | join(' | ') }}).
-      Check the machine's exec channel and state, then re-run; nothing was
-      changed and no contract conclusion was drawn.
+      Check the machine's exec channel and state, then re-run. This refusal
+      changed nothing. No contract conclusion was drawn.
   loop: "{{ (bind_mounts_guest_preflight.results | default([]))
          | selectattr('stdout', 'defined') | list }}"
   loop_control:

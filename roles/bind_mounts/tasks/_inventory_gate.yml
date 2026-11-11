@@ -33,7 +33,7 @@
       ROW-UNPARSEABLE: machine '{{ bind_mounts_gated.name }}' appears in the
       smolvm inventory but its state column ('{{ bind_mounts_row.state }}') is
       not an alphabetic token, so the row could not be parsed. Inspect the
-      machine's state reporting; nothing was changed.
+      machine's state reporting. This refusal changed nothing.
   loop: "{{ bind_mounts_scoped_machines }}"
   loop_control:
     loop_var: bind_mounts_gated
@@ -47,7 +47,7 @@
     msg: >-
       MACHINE-ABSENT: machine '{{ bind_mounts_gated.name }}' was not found in
       `smolvm machine ls --verbose` output. Check for a typo in the machine
-      registry, or create the machine first; nothing was changed.
+      registry, or create the machine first. This refusal changed nothing.
   loop: "{{ bind_mounts_scoped_machines }}"
   loop_control:
     loop_var: bind_mounts_gated
@@ -70,8 +70,8 @@
       reports state '{{ bind_mounts_state_rec.value.state }}'. This role only
       converges running, stopped, and created machines; it refuses the failed,
       unreachable, and frozen states with the raw token named, and refuses any
-      other token as unknown. Resolve the machine's state before re-running;
-      nothing was changed.
+      other token as unknown. Resolve the machine's state before re-running.
+      This refusal changed nothing.
   loop: "{{ bind_mounts_state_gate | dict2items }}"
   loop_control:
     loop_var: bind_mounts_state_rec

@@ -35,7 +35,7 @@
       {{ bind_mounts_active_run.get('pid', 'unknown') }}, started at
       {{ bind_mounts_active_run.get('started-at', 'unknown') }}); it holds
       {{ bind_mounts_state_dir }}/run.lock and only one run may hold it.
-      Nothing was changed.
+      This refusal changed nothing.
   when: (bind_mounts_lock_wait.rc | default(4)) != 0
 
 - name: Sweep staging leftovers from a killed run
