@@ -6,7 +6,9 @@
 #
 # Order: the share tree is prepared regardless of machine state; the
 # identity probe gates every bind change and the host bind lane is written
-# at the observation site; helpers are staged, transferred and preflighted
+# at the observation site; a host stack under a running machine (probe
+# exit 5) ends the run right after the host lane, before any guest work;
+# helpers are staged, transferred and preflighted
 # before any guest mutation; stale guest lanes are cleaned through the
 # helper's triple-checked stale-umount; configured guest binds are ensured
 # and their mountinfo triples recorded; the host-stale gate then remediates
@@ -22,6 +24,11 @@
 
 - name: Probe host bind identity, apply binds, write the host lane
   ansible.builtin.include_tasks: _mounts_host_apply.yml
+
+# A host stack under a running machine (probe exit 5) ends the run here: after
+# the host binds and the host lane are written, before any guest work.
+- name: Refuse the host stacks under running machines, before any guest work
+  ansible.builtin.include_tasks: _mounts_host_stack_refusal.yml
 
 - name: Preflight and stage the guest helpers on the running machines
   ansible.builtin.include_tasks: _mounts_guest_stage.yml

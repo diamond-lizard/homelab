@@ -289,8 +289,11 @@ refuses the same way until the target is unmounted by hand.
 An unproven bind fails the run with every affected host and guest path
 listed; re-running with -e bind_mounts_force_remount=true forces
 replacement once the machine is stopped. Stacked binds at a share
-subdirectory are detected through the per-layer findmnt listing;
-remediation umounts top-down with an ownership check on every layer,
+subdirectory are detected through the per-layer findmnt listing; under a
+running machine the probe exits 5 and the mounts phase refuses the stack
+with a stop-first box, raised after the host apply and before any guest
+work, because libkrun keeps the lower layer pinned; remediation (stopped
+machine) umounts top-down with an ownership check on every layer,
 hard-capped at 10 layers, and verify enforces exactly one layer after a
 successful run. A layer the playbook cannot prove it created is never
 removed, even with force. A guest bind target that carries a volume is
