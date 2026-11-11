@@ -269,6 +269,12 @@ string, root subpath) matches the triple recorded at mount time; a replaced
 layer is refused with both triples printed and the manual command named.
 Ledger entries recorded before triples existed are reported, never removed;
 the next run's re-mount re-marks them.
+A configured guest target whose live layer is no longer the share, although
+the ledger records a mount there, is refused with an ACTION REQUIRED box
+naming the target: the run cannot tell its own stale bind from a foreign
+mount stacked on top, so it unmounts nothing. The refusal comes before the
+guest lane is written, so the ledger record stays and every later run
+refuses the same way until the target is unmounted by hand.
 An unproven bind fails the run with every affected host and guest path
 listed; re-running with -e bind_mounts_force_remount=true forces
 replacement once the machine is stopped. Stacked binds at a share

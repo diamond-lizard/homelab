@@ -504,7 +504,12 @@ layer is umounted only when its live mountinfo triple (filesystem type,
 source, root subpath) matches the triple recorded at mount time; a
 replaced layer is refused with both triples printed, and ledger entries
 recorded before triples existed are reported, never removed, and are
-re-marked by the next run's re-mount. When the ledger cannot prove the
+re-marked by the next run's re-mount. A configured guest target whose
+live layer is no longer the share, although the ledger records a mount
+there, halts the run with an ACTION REQUIRED box naming the target: the
+run cannot tell its own stale bind from a foreign mount stacked on top,
+so it unmounts nothing and keeps the ledger record; unmount it in the
+guest and re-run. When the ledger cannot prove the
 bind is ours, the run halts and lists every affected host and guest
 path; re-run with -e bind_mounts_force_remount=true to accept, or
 unmount manually. A volume at a target the configuration names, which the
