@@ -34,7 +34,6 @@ def ro_state(tgt):
     opts = subprocess.run(["findmnt", "-rn", "-o", "OPTIONS", "-M", tgt],
                           capture_output=True, text=True)
     return 'ro' if 'ro' in opts.stdout.splitlines()[0].split(',') else 'rw'
-    return 'ro' if 'ro' in opts.split(',') else 'rw'
 
 
 def _unescape(text):

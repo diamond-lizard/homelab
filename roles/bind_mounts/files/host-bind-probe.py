@@ -14,13 +14,12 @@ stdout: LAYERS:, LAYER-SRC:, RO-STATE:, ALLOW-PREFIX:, REMOVE-NEEDED:,
 REMEDIATED:; stderr carries refusals.
 """
 import json
-import os
 import subprocess
 import sys
 
 from host_bind_layers import (deleted_ours, layer_context, layer_display,
-                              layer_forced, layer_label, layer_provable,
-                              layer_removable, mount_layers, ro_state, stat_id)
+                              layer_label, layer_provable, layer_removable,
+                              mount_layers, ro_state, stat_id)
 
 
 def refuse_stack(tgt, src, layers, bad, force_named):
