@@ -8,7 +8,7 @@ the configured readonly state.
 
 Usage: host-verify-one.py <configured-source> <host-target> <readonly>
 Exit codes: 0 = verified; 1 = not mounted, wrong source, wrong ro state, or
-stacked mounts (more than one layer at the target).
+stacked mounts (more than one layer at the target), or unreadable mount options.
 """
 import os
 import subprocess
@@ -29,6 +29,16 @@ def stat_id(path):
     return f"{st.st_dev}:{st.st_ino}"
 
 
+def visible_options(path):
+    """Mount options of the visible (top) layer at path, or None when they
+    cannot be read. findmnt lists stacked layers bottom first, so the last
+    line is the layer a remount changes and the one stat sees."""
+    p = subprocess.run(["findmnt", "-rn", "-o", "OPTIONS", "-M", path],
+                       capture_output=True, text=True)
+    lines = p.stdout.splitlines() if p.returncode == 0 else []
+    return lines[-1] if lines else None
+
+
 def main():
     if len(sys.argv) != 4:
         print("usage: host-verify-one.py <src> <host-target> <readonly>", file=sys.stderr)
@@ -41,10 +51,10 @@ def main():
     if stat_id(src) != stat_id(target):
         print(f"verify FAIL (host): {target} does not match {src} (device:inode differ)", file=sys.stderr)
         return 1
-    opts = subprocess.run(
-        ["findmnt", "-rn", "-o", "OPTIONS", "-M", target],
-        capture_output=True, text=True,
-    ).stdout.splitlines()[0]
+    opts = visible_options(target)
+    if opts is None:
+        print(f"verify FAIL (host): cannot read the mount options of {target}", file=sys.stderr)
+        return 1
     ro_now = "ro" in opts.split(",")
     if (readonly == "true") != ro_now:
         print(f"verify FAIL (host): {target} is {'read-only' if ro_now else 'read-write'} but config wants {'read-only' if readonly == 'true' else 'read-write'}", file=sys.stderr)

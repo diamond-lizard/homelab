@@ -49,7 +49,8 @@ Usage: guest-mount-one.py <target> <share-source> <uid> <gid> <readonly>
        guest-mount-one.py stale-umount <target> <fstype> <source> <root>
        guest-mount-one.py stale-umount <target> <fstype> <source> <root> deleted-ours
 Exit codes (ensure form): 0 = already mounted (or remounted) or mounted now;
-3 = foreign mount (never touched); 4 = empty share source (never bound).
+3 = foreign mount (never touched); 4 = empty share source (never bound);
+1 = the mount options of an already mounted target could not be read (nothing was changed).
 Exit codes (stale-umount form): 0 = the verified bind layer was umounted;
 6 = refused, nothing mutated (recorded and live triples differ, or the live
 layer is a real filesystem mount with root subpath '/'; both triples printed
@@ -83,6 +84,16 @@ def is_mountpoint(path):
 def stat_id(path):
     st = os.stat(path)
     return f"{st.st_dev}:{st.st_ino}"
+
+
+def visible_options(path):
+    """Mount options of the visible (top) layer at path, or None when they
+    cannot be read. findmnt lists stacked layers bottom first, so the last
+    line is the layer a remount changes and the one stat sees."""
+    p = subprocess.run(["findmnt", "-rn", "-o", "OPTIONS", "-M", path],
+                       capture_output=True, text=True)
+    lines = p.stdout.splitlines() if p.returncode == 0 else []
+    return lines[-1] if lines else None
 
 
 def top_triple(path):
@@ -229,10 +240,10 @@ def main():
                 print(f"warning: {target} is mounted but {share} is empty; the host-side bind is probably missing", file=sys.stderr)
             # Stack collapse on the host side is the probe's job; the helper
             # only judges the top layer, which is the live view.
-            opts = subprocess.run(
-                ["findmnt", "-rn", "-o", "OPTIONS", "-M", target],
-                capture_output=True, text=True,
-            ).stdout.splitlines()[0]
+            opts = visible_options(target)
+            if opts is None:
+                print(f"ERROR: cannot read the mount options of {target}", file=sys.stderr)
+                return 1
             ro_now = "ro" in opts.split(",")
             if (readonly == "true") != ro_now:
                 subprocess.run(
