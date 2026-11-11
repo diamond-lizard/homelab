@@ -117,12 +117,23 @@ argument_specs:
           Accept replacing or removing binds and volumes the ledger cannot
           prove the role created. The affected machine must be stopped.
         default: false
-      bind_mounts_force_allow_prefixes:
+      bind_mounts_force_allow_layer_prefixes:
         type: list
         elements: str
         description: >-
-          With force, only layers and volumes at or below one of these paths
-          are accepted. Paths are compared by whole path segments.
+          With force, only host bind layers at or below one of these paths
+          are accepted. A path is the layer's path inside its own filesystem,
+          as the refusal box prints it, compared by whole path segments
+          without resolving symlinks. It never accepts a volume.
+        default: []
+      bind_mounts_force_allow_volume_prefixes:
+        type: list
+        elements: str
+        description: >-
+          With force, an unproven volume at a mount target the configuration
+          names is removed only when its source, a host path with symlinks
+          resolved, lies at or below one of these paths. Paths are compared
+          by whole path segments. It never accepts a host bind layer.
         default: []
       bind_mounts_state_dir:
         type: str

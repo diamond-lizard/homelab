@@ -171,5 +171,6 @@
     bind_mounts_machines: "{{ registry }}"
     bind_mounts_limit_machines: "{{ limit_parts }}"
     bind_mounts_force_remount: "{{ bind_mounts_force_remount | default(false) | bool }}"
-    bind_mounts_force_allow_prefixes: "{{ bind_mounts_force_allow_prefixes | default([], true) }}"
+    bind_mounts_force_allow_layer_prefixes: "{{ bind_mounts_force_allow_layer_prefixes | default([], true) }}"
+    bind_mounts_force_allow_volume_prefixes: "{{ bind_mounts_force_allow_volume_prefixes | default([], true) }}"
   tags: [always]

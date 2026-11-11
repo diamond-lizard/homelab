@@ -41,7 +41,7 @@ def refuse_stack(tgt, src, layers, bad, force_named):
     print("REFUSED:   -e bind_mounts_force_remount=true", file=sys.stderr)
     print("REFUSED: force accepts a layer the playbook cannot prove only when", file=sys.stderr)
     print("REFUSED: its path is named explicitly:", file=sys.stderr)
-    print(f"REFUSED:   -e bind_mounts_force_allow_prefixes={force_named}", file=sys.stderr)
+    print(f"REFUSED:   -e bind_mounts_force_allow_layer_prefixes={force_named}", file=sys.stderr)
     print("REFUSED: to clear it by hand, with the machine stopped:", file=sys.stderr)
     print(f"REFUSED:   sudo umount {tgt}", file=sys.stderr)
     return 3
