@@ -43,6 +43,33 @@
     and not ansible_check_mode
     and not bind_mounts_share_root_stats.results[ansible_loop.index0].stat.exists
 
+- name: Stat each per-mount share subdirectory
+  ansible.builtin.stat:
+    path: "{{ bind_mounts_flat_item.host_root }}/{{ bind_mounts_flat_item.name }}"
+    follow: true
+  loop: "{{ bind_mounts_mounts_flat }}"
+  loop_control:
+    loop_var: bind_mounts_flat_item
+    label: "{{ bind_mounts_flat_item.name }}"
+  register: bind_mounts_share_sub_stats
+
+- name: Reject a share subdirectory that exists as a non-directory
+  ansible.builtin.assert:
+    that: >-
+      not bind_mounts_share_sub_stats.results[ansible_loop.index0].stat.exists
+      or bind_mounts_share_sub_stats.results[ansible_loop.index0].stat.isdir
+    msg: >-
+      share subdirectory {{ bind_mounts_flat_item.host_root }}/{{ bind_mounts_flat_item.name }}
+      (machine {{ bind_mounts_flat_item.machine }}) exists but is not a directory.
+  loop: "{{ bind_mounts_mounts_flat }}"
+  loop_control:
+    extended: true
+    loop_var: bind_mounts_flat_item
+    label: "{{ bind_mounts_flat_item.name }}"
+
+# Only a missing subdirectory is created. An existing one keeps its mode: once
+# the host bind is in place this path is the root of the bind, i.e. the real
+# source directory, and a readonly bind refuses the change.
 - name: Create the per-mount share subdirectories (any machine state)
   ansible.builtin.file:
     path: "{{ bind_mounts_flat_item.host_root }}/{{ bind_mounts_flat_item.name }}"
@@ -50,6 +77,9 @@
     mode: "0755"
   loop: "{{ bind_mounts_mounts_flat }}"
   loop_control:
+    extended: true
     loop_var: bind_mounts_flat_item
     label: "{{ bind_mounts_flat_item.name }}"
-  when: not ansible_check_mode
+  when: >-
+    not ansible_check_mode
+    and not bind_mounts_share_sub_stats.results[ansible_loop.index0].stat.exists
